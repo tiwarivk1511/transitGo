@@ -1,0 +1,29 @@
+services:
+
+  redis:
+    image: redis:7-alpine
+    container_name: transitgo-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+
+  backend:
+    build: .
+    container_name: transitgo-backend
+    restart: unless-stopped
+
+    depends_on:
+      - redis
+
+    environment:
+      REDIS_URL: redis://redis:6379/0
+      SQLITE_PATH: /data/transitgo.db
+
+    ports:
+      - "8000:8000"
+
+    volumes:
+      - transitgo_data:/data
+
+volumes:
+  transitgo_data:

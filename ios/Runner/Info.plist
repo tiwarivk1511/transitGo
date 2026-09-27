@@ -66,5 +66,9 @@
 		<string>UIInterfaceOrientationLandscapeLeft</string>
 		<string>UIInterfaceOrientationLandscapeRight</string>
 	</array>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>TransitGo needs your location to track train arrival proximity for Wake-Me-Up alarms.</string>
+	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
+	<string>TransitGo needs background location access to alert you when your train reaches the target station.</string>
 </dict>
 </plist>
