@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import '../../data/models/station.dart';
@@ -97,15 +98,41 @@ class _StationAutocompleteState extends State<StationAutocomplete> {
     });
   }
 
+  String _buildLocationSubtitle(Station s) {
+    final parts = <String>[];
+    if (s.city != null && s.city!.isNotEmpty) parts.add(s.city!);
+    if (s.state != null && s.state!.isNotEmpty) parts.add(s.state!);
+    if (parts.isEmpty) {
+      if (s.zone != null && s.zone!.isNotEmpty) parts.add('Zone: ${s.zone}');
+    }
+    return parts.isNotEmpty ? parts.join(', ') : 'Indian Railways';
+  }
+
   @override
   Widget build(BuildContext context) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
       children: [
+        // Modern Station Input Field
         Row(
           children: [
-            Icon(widget.icon, color: const Color(0xFF00F2FE), size: 20),
-            const SizedBox(width: 16),
+            Container(
+              padding: const EdgeInsets.all(10),
+              decoration: BoxDecoration(
+                color: const Color(0xFF00F2FE).withValues(alpha: 0.1),
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(
+                  color: const Color(0xFF00F2FE).withValues(alpha: 0.25),
+                ),
+              ),
+              child: Icon(
+                widget.icon,
+                color: const Color(0xFF00F2FE),
+                size: 20,
+              ),
+            ),
+            const SizedBox(width: 14),
             Expanded(
               child: TextField(
                 controller: widget.controller,
@@ -114,70 +141,209 @@ class _StationAutocompleteState extends State<StationAutocomplete> {
                 style: GoogleFonts.inter(
                   color: Colors.white,
                   fontWeight: FontWeight.w600,
-                  fontSize: 16,
+                  fontSize: 15,
                 ),
                 decoration: InputDecoration(
                   labelText: widget.label,
                   labelStyle: GoogleFonts.inter(
-                      color: Colors.white38, fontSize: 13),
+                    color: const Color(0xFF00F2FE).withValues(alpha: 0.8),
+                    fontSize: 12,
+                    fontWeight: FontWeight.w500,
+                  ),
                   hintText: widget.hint,
-                  hintStyle:
-                  GoogleFonts.inter(color: Colors.white10, fontSize: 14),
+                  hintStyle: GoogleFonts.inter(
+                    color: Colors.white30,
+                    fontSize: 14,
+                  ),
                   border: InputBorder.none,
                   floatingLabelBehavior: FloatingLabelBehavior.always,
+                  contentPadding: EdgeInsets.zero,
                   suffixIcon: _remoteLoading
                       ? const Padding(
-                    padding: EdgeInsets.all(12),
-                    child: SizedBox(
-                      width: 14,
-                      height: 14,
-                      child: CircularProgressIndicator(
-                          strokeWidth: 2,
-                          color: Color(0xFF00F2FE)),
-                    ),
-                  )
-                      : null,
+                          padding: EdgeInsets.all(10),
+                          child: SizedBox(
+                            width: 16,
+                            height: 16,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2,
+                              color: Color(0xFF00F2FE),
+                            ),
+                          ),
+                        )
+                      : (widget.controller.text.isNotEmpty
+                          ? IconButton(
+                              icon: const Icon(
+                                Icons.clear_rounded,
+                                color: Colors.white38,
+                                size: 18,
+                              ),
+                              onPressed: () {
+                                widget.controller.clear();
+                                setState(() => _suggestions = []);
+                              },
+                            )
+                          : null),
                 ),
               ),
             ),
           ],
         ),
+
+        // Glassmorphic Overlay Dropdown Suggestions Card
         if (_suggestions.isNotEmpty)
-          Container(
-            margin: const EdgeInsets.only(top: 8, left: 36),
-            constraints: const BoxConstraints(maxHeight: 260),
-            decoration: BoxDecoration(
-              color: Colors.black26,
+          Padding(
+            padding: const EdgeInsets.only(top: 8),
+            child: ClipRRect(
               borderRadius: BorderRadius.circular(16),
-              border: Border.all(color: Colors.white.withOpacity(0.05)),
-            ),
-            child: ListView.builder(
-              shrinkWrap: true,
-              itemCount: _suggestions.length,
-              itemBuilder: (_, i) {
-                final s = _suggestions[i];
-                return Material(
-                  color: Colors.transparent,
-                  child: ListTile(
-                    dense: true,
-                    title: Text(s.name,
-                        style: GoogleFonts.inter(
-                            color: Colors.white,
-                            fontWeight: FontWeight.w600)),
-                    subtitle: Text(
-                      s.city != null && s.city!.isNotEmpty
-                          ? '${s.code} • ${s.city}'
-                          : s.code,
-                      style: GoogleFonts.inter(
-                          color: Colors.white38, fontSize: 11),
+              child: BackdropFilter(
+                filter: ImageFilter.blur(sigmaX: 12, sigmaY: 12),
+                child: Container(
+                  constraints: const BoxConstraints(maxHeight: 260),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF1E293B).withValues(alpha: 0.88),
+                    borderRadius: BorderRadius.circular(16),
+                    border: Border.all(
+                      color: const Color(0xFF00F2FE).withValues(alpha: 0.25),
+                      width: 1,
                     ),
-                    onTap: () {
-                      widget.onStationSelected(s);
-                      setState(() => _suggestions = []);
+                    boxShadow: [
+                      BoxShadow(
+                        color: const Color(0xFF00F2FE).withValues(alpha: 0.12),
+                        blurRadius: 20,
+                        spreadRadius: 2,
+                      ),
+                    ],
+                  ),
+                  child: ListView.separated(
+                    shrinkWrap: true,
+                    physics: const BouncingScrollPhysics(),
+                    padding: const EdgeInsets.symmetric(vertical: 6),
+                    itemCount: _suggestions.length,
+                    separatorBuilder: (_, _) => Divider(
+                      height: 1,
+                      thickness: 0.5,
+                      color: Colors.white.withValues(alpha: 0.08),
+                    ),
+                    itemBuilder: (_, i) {
+                      final s = _suggestions[i];
+                      return Material(
+                        color: Colors.transparent,
+                        child: InkWell(
+                          splashColor:
+                              const Color(0xFF00F2FE).withValues(alpha: 0.15),
+                          highlightColor:
+                              const Color(0xFF00F2FE).withValues(alpha: 0.05),
+                          onTap: () {
+                            widget.onStationSelected(s);
+                            setState(() => _suggestions = []);
+                          },
+                          child: Padding(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 14,
+                              vertical: 10,
+                            ),
+                            child: Row(
+                              children: [
+                                // Station Code Orbitron Badge
+                                Container(
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 10,
+                                    vertical: 6,
+                                  ),
+                                  decoration: BoxDecoration(
+                                    color: const Color(0xFF00F2FE)
+                                        .withValues(alpha: 0.1),
+                                    borderRadius: BorderRadius.circular(10),
+                                    border: Border.all(
+                                      color: const Color(0xFF00F2FE)
+                                          .withValues(alpha: 0.3),
+                                    ),
+                                  ),
+                                  child: Text(
+                                    s.code,
+                                    style: GoogleFonts.orbitron(
+                                      color: const Color(0xFF00F2FE),
+                                      fontSize: 12,
+                                      fontWeight: FontWeight.w700,
+                                    ),
+                                  ),
+                                ),
+                                const SizedBox(width: 12),
+
+                                // Station Name & Metadata
+                                Expanded(
+                                  child: Column(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: [
+                                      Text(
+                                        s.name,
+                                        overflow: TextOverflow.ellipsis,
+                                        style: GoogleFonts.inter(
+                                          color: Colors.white,
+                                          fontSize: 14,
+                                          fontWeight: FontWeight.w600,
+                                        ),
+                                      ),
+                                      const SizedBox(height: 3),
+                                      Row(
+                                        children: [
+                                          const Icon(
+                                            Icons.location_on_outlined,
+                                            size: 12,
+                                            color: Colors.white38,
+                                          ),
+                                          const SizedBox(width: 4),
+                                          Expanded(
+                                            child: Text(
+                                              _buildLocationSubtitle(s),
+                                              overflow: TextOverflow.ellipsis,
+                                              style: GoogleFonts.inter(
+                                                color: Colors.white54,
+                                                fontSize: 11,
+                                                fontWeight: FontWeight.w500,
+                                              ),
+                                            ),
+                                          ),
+                                          if (s.type != null &&
+                                              s.type!.isNotEmpty) ...[
+                                            const SizedBox(width: 6),
+                                            Container(
+                                              padding:
+                                                  const EdgeInsets.symmetric(
+                                                horizontal: 6,
+                                                vertical: 2,
+                                              ),
+                                              decoration: BoxDecoration(
+                                                color: Colors.white
+                                                    .withValues(alpha: 0.08),
+                                                borderRadius:
+                                                    BorderRadius.circular(4),
+                                              ),
+                                              child: Text(
+                                                s.type!.toUpperCase(),
+                                                style: GoogleFonts.inter(
+                                                  color: Colors.white70,
+                                                  fontSize: 9,
+                                                  fontWeight: FontWeight.w600,
+                                                ),
+                                              ),
+                                            ),
+                                          ],
+                                        ],
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                      );
                     },
                   ),
-                );
-              },
+                ),
+              ),
             ),
           ),
       ],

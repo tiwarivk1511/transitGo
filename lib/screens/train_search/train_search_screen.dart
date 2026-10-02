@@ -1,9 +1,10 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
-import 'package:intl/intl.dart';
 
 import '../../components/common/error_box.dart';
 import '../../components/train/train_card.dart';
+import '../../core/cache/offline_cache.dart';
 import '../../services/train_service.dart';
 import '../train_details/train_details_screen.dart';
 
@@ -26,8 +27,6 @@ class TrainSearchScreen extends StatefulWidget {
 }
 
 class _TrainSearchScreenState extends State<TrainSearchScreen> {
-  late String _date;
-
   bool _loading = true;
   bool _fetching = false;
   bool _disposed = false;
@@ -38,7 +37,19 @@ class _TrainSearchScreenState extends State<TrainSearchScreen> {
   @override
   void initState() {
     super.initState();
-    _date = DateFormat('yyyy-MM-dd').format(DateTime.now());
+    unawaited(
+      OfflineCache.addHistory(
+        'route_search',
+        '${widget.fromCode} → ${widget.toCode}',
+        label: '${widget.fromName} → ${widget.toName}',
+        data: {
+          'fromCode': widget.fromCode,
+          'toCode': widget.toCode,
+          'fromName': widget.fromName,
+          'toName': widget.toName,
+        },
+      ),
+    );
     _load();
   }
 
@@ -61,11 +72,7 @@ class _TrainSearchScreenState extends State<TrainSearchScreen> {
 
     Map<String, dynamic>? d;
     try {
-      d = await TrainService.trainsBetween(
-        widget.fromCode,
-        widget.toCode,
-        _date,
-      );
+      d = await TrainService.trainsBetween(widget.fromCode, widget.toCode);
     } catch (_) {
       d = null;
     }
@@ -81,7 +88,8 @@ class _TrainSearchScreenState extends State<TrainSearchScreen> {
       setState(() {
         _loading = false;
         _trains = [];
-        _error = detail ??
+        _error =
+            detail ??
             'Couldn\'t reach the server.\n'
                 'Check your connection and try again.';
       });
@@ -92,10 +100,7 @@ class _TrainSearchScreenState extends State<TrainSearchScreen> {
     // ── Valid response (empty list is fine) ────────────────────────
     final raw = d['trains'];
     final list = (raw is List)
-        ? raw
-        .whereType<Map>()
-        .map((e) => Map<String, dynamic>.from(e))
-        .toList()
+        ? raw.whereType<Map>().map((e) => Map<String, dynamic>.from(e)).toList()
         : <Map<String, dynamic>>[];
 
     setState(() {
@@ -109,16 +114,17 @@ class _TrainSearchScreenState extends State<TrainSearchScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final dateLabel = _safeDateLabel(_date);
-
     return Scaffold(
       backgroundColor: const Color(0xFF0B132B),
       appBar: AppBar(
         backgroundColor: const Color(0xFF1C2541),
         elevation: 0,
         leading: IconButton(
-          icon: const Icon(Icons.arrow_back_ios_new,
-              color: Colors.white, size: 20),
+          icon: const Icon(
+            Icons.arrow_back_ios_new,
+            color: Colors.white,
+            size: 20,
+          ),
           onPressed: () => Navigator.pop(context),
         ),
         title: Column(
@@ -133,8 +139,8 @@ class _TrainSearchScreenState extends State<TrainSearchScreen> {
               ),
             ),
             Text(
-              '$dateLabel'
-                  '${_trains.isNotEmpty ? " • ${_trains.length} trains" : ""}',
+              'All operating days'
+              '${_trains.isNotEmpty ? " • ${_trains.length} trains" : ""}',
               style: GoogleFonts.inter(
                 fontSize: 10,
                 color: Colors.white54,
@@ -168,8 +174,7 @@ class _TrainSearchScreenState extends State<TrainSearchScreen> {
               const SizedBox(height: 16),
               Text(
                 'Or search a different route.',
-                style: GoogleFonts.inter(
-                    color: Colors.white38, fontSize: 11),
+                style: GoogleFonts.inter(color: Colors.white38, fontSize: 11),
               ),
             ],
           ),
@@ -192,12 +197,15 @@ class _TrainSearchScreenState extends State<TrainSearchScreen> {
                 padding: const EdgeInsets.symmetric(horizontal: 32),
                 child: Column(
                   children: [
-                    const Icon(Icons.train_outlined,
-                        color: Colors.white38, size: 48),
+                    const Icon(
+                      Icons.train_outlined,
+                      color: Colors.white38,
+                      size: 48,
+                    ),
                     const SizedBox(height: 12),
                     Text(
                       'No direct trains found\n'
-                          'between ${widget.fromCode} and ${widget.toCode}.',
+                      'between ${widget.fromCode} and ${widget.toCode}.',
                       textAlign: TextAlign.center,
                       style: GoogleFonts.inter(
                         color: Colors.white70,
@@ -207,7 +215,7 @@ class _TrainSearchScreenState extends State<TrainSearchScreen> {
                     ),
                     const SizedBox(height: 6),
                     Text(
-                      'Try a different date or check nearby stations.',
+                      'Check the station codes or try nearby stations.',
                       textAlign: TextAlign.center,
                       style: GoogleFonts.inter(
                         color: Colors.white38,
@@ -253,10 +261,12 @@ class _TrainSearchScreenState extends State<TrainSearchScreen> {
         ? distanceRaw.toDouble()
         : double.tryParse(distanceRaw?.toString() ?? '0') ?? 0;
 
-    final durationMin = (item['duration'] as num?)?.toInt() ??
+    final durationMin =
+        (item['duration'] as num?)?.toInt() ??
         int.tryParse(item['duration']?.toString() ?? '');
 
-    final halts = (item['halts'] as num?)?.toInt() ??
+    final halts =
+        (item['halts'] as num?)?.toInt() ??
         int.tryParse(item['halts']?.toString() ?? '');
 
     final trainNumber = train['number']?.toString() ?? '';
@@ -289,14 +299,5 @@ class _TrainSearchScreenState extends State<TrainSearchScreen> {
         );
       },
     );
-  }
-
-  static String _safeDateLabel(String iso) {
-    try {
-      final dt = DateTime.parse(iso);
-      return DateFormat('EEE, dd MMM').format(dt);
-    } catch (_) {
-      return iso;
-    }
   }
 }

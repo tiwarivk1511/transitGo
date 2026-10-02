@@ -1,8 +1,12 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:intl/intl.dart';
+import '../../components/coach/StaticTrainRakeView.dart';
 import '../../components/common/error_box.dart';
+import '../../components/common/live_speed_card.dart';
 import '../../components/common/loading_indicator.dart';
+import '../../core/cache/offline_cache.dart';
 import '../../data/models/train.dart';
 import '../../services/train_service.dart';
 import '../../services/wake_me_up_service.dart';
@@ -30,19 +34,48 @@ class _TrainDetailsScreenState extends State<TrainDetailsScreen>
   String? _error;
   DateTime? _lastFetch;
   StreamSubscription<TrainTracking>? _sub;
+  final ScrollController _detailScrollController = ScrollController();
+  bool _hasScrolledToCurrent = false;
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    unawaited(
+      OfflineCache.addHistory(
+        'train',
+        widget.trainNumber,
+        label: '${widget.trainNumber} • ${widget.trainName}',
+        data: {
+          'trainNumber': widget.trainNumber,
+          'trainName': widget.trainName,
+        },
+      ),
+    );
     _subscribe();
   }
 
   @override
   void dispose() {
+    _detailScrollController.dispose();
     WidgetsBinding.instance.removeObserver(this);
     _sub?.cancel();
     super.dispose();
+  }
+
+  void _scrollToCurrentStation() {
+    if (_data == null || !_detailScrollController.hasClients) return;
+    final curIdx = _data!.currentIndex;
+    if (curIdx < 0) return;
+    final offset = (curIdx * 75.0).clamp(
+      0.0,
+      _detailScrollController.position.maxScrollExtent,
+    );
+    _detailScrollController.animateTo(
+      offset,
+      duration: const Duration(milliseconds: 700),
+      curve: Curves.easeInOut,
+    );
   }
 
   @override
@@ -59,27 +92,34 @@ class _TrainDetailsScreenState extends State<TrainDetailsScreen>
     _sub?.cancel();
     if (mounted) setState(() => _loading = _data == null);
 
-    _sub = TrainService.stream(
-      widget.trainNumber,
-      interval: const Duration(seconds: 30),
-    ).listen(
+    _sub =
+        TrainService.stream(
+          widget.trainNumber,
+          interval: const Duration(seconds: 30),
+        ).listen(
           (data) {
-        if (!mounted) return;
-        setState(() {
-          _data = data;
-          _loading = false;
-          _error = null;
-          _lastFetch = DateTime.now();
-        });
-      },
-      onError: (e) {
-        if (!mounted) return;
-        setState(() {
-          _loading = false;
-          if (_data == null) _error = 'Failed to load live status.';
-        });
-      },
-    );
+            if (!mounted) return;
+            setState(() {
+              _data = data;
+              _loading = false;
+              _error = null;
+              _lastFetch = DateTime.now();
+            });
+            if (!_hasScrolledToCurrent) {
+              _hasScrolledToCurrent = true;
+              WidgetsBinding.instance.addPostFrameCallback(
+                (_) => _scrollToCurrentStation(),
+              );
+            }
+          },
+          onError: (e) {
+            if (!mounted) return;
+            setState(() {
+              _loading = false;
+              if (_data == null) _error = 'Failed to load live status.';
+            });
+          },
+        );
   }
 
   Future<void> _manualRefresh() async {
@@ -110,7 +150,8 @@ class _TrainDetailsScreenState extends State<TrainDetailsScreen>
       context: context,
       backgroundColor: const Color(0xFF1C2541),
       shape: const RoundedRectangleBorder(
-          borderRadius: BorderRadius.vertical(top: Radius.circular(24))),
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
       builder: (_) => ListView.builder(
         padding: const EdgeInsets.all(20),
         itemCount: _data!.route.length,
@@ -120,12 +161,13 @@ class _TrainDetailsScreenState extends State<TrainDetailsScreen>
           return Material(
             color: Colors.transparent,
             child: ListTile(
-              title: Text(s.stationName,
-                  style: GoogleFonts.inter(color: Colors.white)),
+              title: Text(
+                s.stationName,
+                style: GoogleFonts.inter(color: Colors.white),
+              ),
               subtitle: Text(
                 '${t ?? '--'} • Day ${s.arrivalDay}',
-                style: GoogleFonts.inter(
-                    color: Colors.white54, fontSize: 11),
+                style: GoogleFonts.inter(color: Colors.white54, fontSize: 11),
               ),
               onTap: () => Navigator.pop(context, s.stationCode),
             ),
@@ -134,19 +176,22 @@ class _TrainDetailsScreenState extends State<TrainDetailsScreen>
       ),
     );
     if (sel == null) return;
-    final target =
-    _data!.route.firstWhere((s) => s.stationCode == sel);
+    final target = _data!.route.firstWhere((s) => s.stationCode == sel);
     WakeMeUpService.arm(
       trainNumber: _data!.trainNumber,
       targetStationCode: target.stationCode,
       targetStationName: target.stationName,
     );
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-      backgroundColor: const Color(0xFF1C2541),
-      content: Text('🔔 Alarm set for ${target.stationName}',
-          style: GoogleFonts.inter(color: Colors.white)),
-    ));
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        backgroundColor: const Color(0xFF1C2541),
+        content: Text(
+          '🔔 Alarm set for ${target.stationName}',
+          style: GoogleFonts.inter(color: Colors.white),
+        ),
+      ),
+    );
   }
 
   @override
@@ -156,22 +201,27 @@ class _TrainDetailsScreenState extends State<TrainDetailsScreen>
       backgroundColor: const Color(0xFF0B132B),
       floatingActionButton: d != null
           ? FloatingActionButton.extended(
-        onPressed: _wakeMeUp,
-        backgroundColor: const Color(0xFF00F2FE),
-        icon: const Icon(Icons.alarm_add,
-            color: Color(0xFF0B132B)),
-        label: Text('Wake Me Up',
-            style: GoogleFonts.inter(
-                color: const Color(0xFF0B132B),
-                fontWeight: FontWeight.w900)),
-      )
+              onPressed: _wakeMeUp,
+              backgroundColor: const Color(0xFF00F2FE),
+              icon: const Icon(Icons.alarm_add, color: Color(0xFF0B132B)),
+              label: Text(
+                'Wake Me Up',
+                style: GoogleFonts.inter(
+                  color: const Color(0xFF0B132B),
+                  fontWeight: FontWeight.w900,
+                ),
+              ),
+            )
           : null,
       appBar: AppBar(
         backgroundColor: const Color(0xFF1C2541),
         elevation: 0,
         leading: IconButton(
-          icon: const Icon(Icons.arrow_back_ios_new,
-              color: Colors.white, size: 20),
+          icon: const Icon(
+            Icons.arrow_back_ios_new,
+            color: Colors.white,
+            size: 20,
+          ),
           onPressed: () => Navigator.pop(context),
         ),
         title: Column(
@@ -182,16 +232,16 @@ class _TrainDetailsScreenState extends State<TrainDetailsScreen>
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
               style: GoogleFonts.inter(
-                  color: Colors.white,
-                  fontWeight: FontWeight.w900,
-                  fontSize: 14),
+                color: Colors.white,
+                fontWeight: FontWeight.w900,
+                fontSize: 14,
+              ),
             ),
             if (d != null)
               Text(
                 '${d.trainNumber}'
-                    '${d.trainType.isNotEmpty ? " • ${d.trainType}" : ""}',
-                style: GoogleFonts.inter(
-                    color: Colors.white54, fontSize: 10),
+                '${d.trainType.isNotEmpty ? " • ${d.trainType}" : ""}',
+                style: GoogleFonts.inter(color: Colors.white54, fontSize: 10),
               ),
           ],
         ),
@@ -214,10 +264,13 @@ class _TrainDetailsScreenState extends State<TrainDetailsScreen>
           IconButton(
             icon: _refreshing
                 ? const SizedBox(
-                width: 18,
-                height: 18,
-                child: CircularProgressIndicator(
-                    strokeWidth: 2, color: Color(0xFF00F2FE)))
+                    width: 18,
+                    height: 18,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      color: Color(0xFF00F2FE),
+                    ),
+                  )
                 : const Icon(Icons.refresh, color: Colors.white70),
             onPressed: _manualRefresh,
           ),
@@ -227,49 +280,59 @@ class _TrainDetailsScreenState extends State<TrainDetailsScreen>
           ? const LoadingIndicator(label: 'Fetching live status…')
           : _error != null && _data == null
           ? Center(
-        child: Padding(
-          padding: const EdgeInsets.all(24),
-          child: ErrorBox(
-              message: _error!,
-              onRetry: _manualRefresh),
-        ),
-      )
+              child: Padding(
+                padding: const EdgeInsets.all(24),
+                child: ErrorBox(message: _error!, onRetry: _manualRefresh),
+              ),
+            )
           : RefreshIndicator(
-        onRefresh: _manualRefresh,
-        color: const Color(0xFF00F2FE),
-        backgroundColor: const Color(0xFF1C2541),
-        child: _data == null
-            ? ListView(children: const [
-          SizedBox(height: 200),
-          Center(
-              child: Text('No data',
-                  style:
-                  TextStyle(color: Colors.white54))),
-        ])
-            : ListView(
-          padding:
-          const EdgeInsets.fromLTRB(16, 16, 16, 100),
-          children: [
-            _StatusHeader(
-                data: _data!, lastFetch: _lastFetch),
-            const SizedBox(height: 16),
-            _JourneySummary(data: _data!),
-            if (_data!.nextHalt != null) ...[
-              const SizedBox(height: 16),
-              _NextHaltCard(
-                  data: _data!,
-                  nextHalt: _data!.nextHalt!),
-            ],
-            if (_data!.coachComposition.isNotEmpty) ...[
-              const SizedBox(height: 16),
-              _CoachStrip(
-                  coaches: _data!.coachComposition),
-            ],
-            const SizedBox(height: 20),
-            _RouteTimeline(data: _data!),
-          ],
-        ),
-      ),
+              onRefresh: _manualRefresh,
+              color: const Color(0xFF00F2FE),
+              backgroundColor: const Color(0xFF1C2541),
+              child: _data == null
+                  ? ListView(
+                      children: const [
+                        SizedBox(height: 200),
+                        Center(
+                          child: Text(
+                            'No data',
+                            style: TextStyle(color: Colors.white54),
+                          ),
+                        ),
+                      ],
+                    )
+                  : ListView(
+                      controller: _detailScrollController,
+                      padding: const EdgeInsets.fromLTRB(16, 16, 16, 100),
+                      children: [
+                        _StatusHeader(data: _data!, lastFetch: _lastFetch),
+                        const SizedBox(height: 16),
+                        LiveSpeedCard(
+                          trainSpeedKmh: _data!.currentLocation.speedKmh,
+                          trainLivePosition:
+                              _data!.currentLocation.hasGpsCoordinates
+                              ? _data!.currentLocation.latLng
+                              : null,
+                          trainRoute: _data!.routeGeometry,
+                        ),
+                        const SizedBox(height: 16),
+                        _JourneySummary(data: _data!),
+                        if (_data!.nextHalt != null) ...[
+                          const SizedBox(height: 16),
+                          _NextHaltCard(
+                            data: _data!,
+                            nextHalt: _data!.nextHalt!,
+                          ),
+                        ],
+                        if (_data!.coachComposition.isNotEmpty) ...[
+                          const SizedBox(height: 16),
+                          _CoachStrip(coaches: _data!.coachComposition, trainName: _data!.trainName, trainType: _data!.trainType),
+                        ],
+                        const SizedBox(height: 20),
+                        _RouteTimeline(data: _data!),
+                      ],
+                    ),
+            ),
     );
   }
 }
@@ -296,8 +359,7 @@ class _StatusHeader extends StatelessWidget {
           end: Alignment.bottomRight,
         ),
         borderRadius: BorderRadius.circular(24),
-        border:
-        Border.all(color: statusColor.withOpacity(0.35), width: 1.2),
+        border: Border.all(color: statusColor.withOpacity(0.35), width: 1.2),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -305,42 +367,55 @@ class _StatusHeader extends StatelessWidget {
           Row(
             children: [
               _StatusPill(
-                  label: data.statusLabel,
-                  color: statusColor,
-                  isLive: data.isLive),
+                label: data.statusLabel,
+                color: statusColor,
+                isLive: data.isLive,
+              ),
               const Spacer(),
               if (lastFetch != null)
-                Text(_relativeTime(lastFetch!),
-                    style: GoogleFonts.inter(
-                        color: Colors.white38, fontSize: 10)),
+                Text(
+                  '${DateFormat('h:mm a').format(lastFetch!)} • '
+                  '${_relativeTime(lastFetch!)}',
+                  style: GoogleFonts.inter(color: Colors.white38, fontSize: 10),
+                ),
             ],
           ),
           const SizedBox(height: 18),
           if (data.currentLocation.stationName.isNotEmpty) ...[
-            Text('CURRENTLY AT',
-                style: GoogleFonts.inter(
-                    color: Colors.white38,
-                    fontSize: 9,
-                    letterSpacing: 2,
-                    fontWeight: FontWeight.w800)),
+            Text(
+              'CURRENTLY AT',
+              style: GoogleFonts.inter(
+                color: Colors.white38,
+                fontSize: 9,
+                letterSpacing: 2,
+                fontWeight: FontWeight.w800,
+              ),
+            ),
             const SizedBox(height: 4),
-            Text(data.currentLocation.stationName,
-                style: GoogleFonts.inter(
-                    color: Colors.white,
-                    fontSize: 22,
-                    fontWeight: FontWeight.w900)),
+            Text(
+              data.currentLocation.stationName,
+              style: GoogleFonts.inter(
+                color: Colors.white,
+                fontSize: 22,
+                fontWeight: FontWeight.w900,
+              ),
+            ),
             if (data.currentLocation.isHalt) ...[
               const SizedBox(height: 2),
-              Text('HALTED • ${data.currentLocation.stationCode}',
-                  style: GoogleFonts.inter(
-                      color: statusColor,
-                      fontSize: 10,
-                      fontWeight: FontWeight.w800)),
+              Text(
+                'HALTED • ${data.currentLocation.stationCode}',
+                style: GoogleFonts.inter(
+                  color: statusColor,
+                  fontSize: 10,
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
             ] else if (data.currentLocation.stationCode.isNotEmpty) ...[
               const SizedBox(height: 2),
-              Text(data.currentLocation.stationCode,
-                  style: GoogleFonts.inter(
-                      color: Colors.white54, fontSize: 11)),
+              Text(
+                data.currentLocation.stationCode,
+                style: GoogleFonts.inter(color: Colors.white54, fontSize: 11),
+              ),
             ],
             const SizedBox(height: 16),
           ],
@@ -348,15 +423,6 @@ class _StatusHeader extends StatelessWidget {
           const SizedBox(height: 18),
           Row(
             children: [
-              Expanded(
-                child: _Stat(
-                  icon: Icons.speed_rounded,
-                  value:
-                  '${data.currentLocation.speedKmh?.toStringAsFixed(0) ?? '0'}',
-                  label: 'KM/H',
-                  color: Colors.cyanAccent,
-                ),
-              ),
               Expanded(
                 child: _Stat(
                   icon: Icons.timer_outlined,
@@ -376,8 +442,7 @@ class _StatusHeader extends StatelessWidget {
               Expanded(
                 child: _Stat(
                   icon: Icons.av_timer_rounded,
-                  value:
-                  '${(data.progressFraction * 100).toStringAsFixed(0)}%',
+                  value: '${(data.progressFraction * 100).toStringAsFixed(0)}%',
                   label: 'DONE',
                   color: const Color(0xFF00F2FE),
                 ),
@@ -420,8 +485,11 @@ class _StatusPill extends StatelessWidget {
   final String label;
   final Color color;
   final bool isLive;
-  const _StatusPill(
-      {required this.label, required this.color, required this.isLive});
+  const _StatusPill({
+    required this.label,
+    required this.color,
+    required this.isLive,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -444,20 +512,24 @@ class _StatusPill extends StatelessWidget {
                 shape: BoxShape.circle,
                 boxShadow: [
                   BoxShadow(
-                      color: color.withOpacity(0.7),
-                      blurRadius: 8,
-                      spreadRadius: 1)
+                    color: color.withOpacity(0.7),
+                    blurRadius: 8,
+                    spreadRadius: 1,
+                  ),
                 ],
               ),
             ),
             const SizedBox(width: 6),
           ],
-          Text(label.toUpperCase(),
-              style: GoogleFonts.inter(
-                  color: color,
-                  fontSize: 10,
-                  fontWeight: FontWeight.w900,
-                  letterSpacing: 1.2)),
+          Text(
+            label.toUpperCase(),
+            style: GoogleFonts.inter(
+              color: color,
+              fontSize: 10,
+              fontWeight: FontWeight.w900,
+              letterSpacing: 1.2,
+            ),
+          ),
         ],
       ),
     );
@@ -482,17 +554,23 @@ class _Stat extends StatelessWidget {
       children: [
         Icon(icon, color: color.withOpacity(0.7), size: 18),
         const SizedBox(height: 6),
-        Text(value,
-            style: GoogleFonts.inter(
-                color: color,
-                fontWeight: FontWeight.w900,
-                fontSize: 15)),
-        Text(label,
-            style: GoogleFonts.inter(
-                color: Colors.white24,
-                fontSize: 8,
-                fontWeight: FontWeight.w900,
-                letterSpacing: 0.5)),
+        Text(
+          value,
+          style: GoogleFonts.inter(
+            color: color,
+            fontWeight: FontWeight.w900,
+            fontSize: 15,
+          ),
+        ),
+        Text(
+          label,
+          style: GoogleFonts.inter(
+            color: Colors.white24,
+            fontSize: 8,
+            fontWeight: FontWeight.w900,
+            letterSpacing: 0.5,
+          ),
+        ),
       ],
     );
   }
@@ -512,25 +590,32 @@ class _ProgressBar extends StatelessWidget {
       children: [
         Row(
           children: [
-            Text(data.source?.code ?? '—',
-                style: GoogleFonts.inter(
-                    color: Colors.white70,
-                    fontWeight: FontWeight.w900,
-                    fontSize: 11)),
+            Text(
+              data.source?.code ?? '—',
+              style: GoogleFonts.inter(
+                color: Colors.white70,
+                fontWeight: FontWeight.w900,
+                fontSize: 11,
+              ),
+            ),
             const Spacer(),
             Text(
               '${covered.toStringAsFixed(0)} / ${total.toStringAsFixed(0)} km',
               style: GoogleFonts.inter(
-                  color: Colors.white54,
-                  fontSize: 11,
-                  fontWeight: FontWeight.w600),
+                color: Colors.white54,
+                fontSize: 11,
+                fontWeight: FontWeight.w600,
+              ),
             ),
             const Spacer(),
-            Text(data.destination?.code ?? '—',
-                style: GoogleFonts.inter(
-                    color: Colors.white70,
-                    fontWeight: FontWeight.w900,
-                    fontSize: 11)),
+            Text(
+              data.destination?.code ?? '—',
+              style: GoogleFonts.inter(
+                color: Colors.white70,
+                fontWeight: FontWeight.w900,
+                fontSize: 11,
+              ),
+            ),
           ],
         ),
         const SizedBox(height: 8),
@@ -554,8 +639,9 @@ class _ProgressBar extends StatelessWidget {
                   borderRadius: BorderRadius.circular(4),
                   boxShadow: [
                     BoxShadow(
-                        color: const Color(0xFF00F2FE).withOpacity(0.5),
-                        blurRadius: 8)
+                      color: const Color(0xFF00F2FE).withOpacity(0.5),
+                      blurRadius: 8,
+                    ),
                   ],
                 ),
               ),
@@ -589,31 +675,43 @@ class _JourneySummary extends StatelessWidget {
           Row(
             children: [
               Expanded(
-                child: _endpoint('FROM', data.source?.code ?? '—',
-                    data.source?.name ?? '—', true),
+                child: _endpoint(
+                  'FROM',
+                  data.source?.code ?? '—',
+                  data.source?.name ?? '—',
+                  true,
+                ),
               ),
               Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 12),
                 child: Column(
                   children: [
-                    const Icon(Icons.train_rounded,
-                        color: Color(0xFF00F2FE), size: 20),
+                    const Icon(
+                      Icons.train_rounded,
+                      color: Color(0xFF00F2FE),
+                      size: 20,
+                    ),
                     const SizedBox(height: 2),
                     Text(
                       data.durationMin != null
                           ? _fmtDuration(data.durationMin!)
                           : '—',
                       style: GoogleFonts.inter(
-                          color: Colors.white54,
-                          fontSize: 10,
-                          fontWeight: FontWeight.w700),
+                        color: Colors.white54,
+                        fontSize: 10,
+                        fontWeight: FontWeight.w700,
+                      ),
                     ),
                   ],
                 ),
               ),
               Expanded(
-                child: _endpoint('TO', data.destination?.code ?? '—',
-                    data.destination?.name ?? '—', false),
+                child: _endpoint(
+                  'TO',
+                  data.destination?.code ?? '—',
+                  data.destination?.name ?? '—',
+                  false,
+                ),
               ),
             ],
           ),
@@ -621,12 +719,15 @@ class _JourneySummary extends StatelessWidget {
             const Divider(color: Colors.white10, height: 24),
             Row(
               children: [
-                Text('RUNS ON',
-                    style: GoogleFonts.inter(
-                        color: Colors.white38,
-                        fontSize: 9,
-                        letterSpacing: 1.5,
-                        fontWeight: FontWeight.w800)),
+                Text(
+                  'RUNS ON',
+                  style: GoogleFonts.inter(
+                    color: Colors.white38,
+                    fontSize: 9,
+                    letterSpacing: 1.5,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
                 const SizedBox(width: 12),
                 Expanded(child: _RunDaysRow(days: data.runDays)),
               ],
@@ -639,27 +740,36 @@ class _JourneySummary extends StatelessWidget {
 
   Widget _endpoint(String label, String code, String name, bool isLeft) {
     return Column(
-      crossAxisAlignment:
-      isLeft ? CrossAxisAlignment.start : CrossAxisAlignment.end,
+      crossAxisAlignment: isLeft
+          ? CrossAxisAlignment.start
+          : CrossAxisAlignment.end,
       children: [
-        Text(label,
-            style: GoogleFonts.inter(
-                color: Colors.white38,
-                fontSize: 9,
-                letterSpacing: 1.5,
-                fontWeight: FontWeight.w800)),
+        Text(
+          label,
+          style: GoogleFonts.inter(
+            color: Colors.white38,
+            fontSize: 9,
+            letterSpacing: 1.5,
+            fontWeight: FontWeight.w800,
+          ),
+        ),
         const SizedBox(height: 4),
-        Text(code,
-            style: GoogleFonts.inter(
-                color: Colors.white,
-                fontWeight: FontWeight.w900,
-                fontSize: 18)),
+        Text(
+          code,
+          style: GoogleFonts.inter(
+            color: Colors.white,
+            fontWeight: FontWeight.w900,
+            fontSize: 18,
+          ),
+        ),
         const SizedBox(height: 2),
-        Text(name,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            textAlign: isLeft ? TextAlign.start : TextAlign.end,
-            style: GoogleFonts.inter(color: Colors.white54, fontSize: 11)),
+        Text(
+          name,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          textAlign: isLeft ? TextAlign.start : TextAlign.end,
+          style: GoogleFonts.inter(color: Colors.white54, fontSize: 11),
+        ),
       ],
     );
   }
@@ -679,8 +789,13 @@ class _RunDaysRow extends StatelessWidget {
 
   static const _order = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'];
   static const _label = {
-    'mon': 'M', 'tue': 'T', 'wed': 'W', 'thu': 'T',
-    'fri': 'F', 'sat': 'S', 'sun': 'S',
+    'mon': 'M',
+    'tue': 'T',
+    'wed': 'W',
+    'thu': 'T',
+    'fri': 'F',
+    'sat': 'S',
+    'sun': 'S',
   };
 
   @override
@@ -736,7 +851,7 @@ class _NextHaltCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final stop = data.route.firstWhere(
-          (s) => s.stationCode == nextHalt.code,
+      (s) => s.stationCode == nextHalt.code,
       orElse: () => const TrainRouteStop(
         sequence: 0,
         stationCode: '',
@@ -752,8 +867,7 @@ class _NextHaltCard extends StatelessWidget {
       decoration: BoxDecoration(
         color: const Color(0xFF0F1A38),
         borderRadius: BorderRadius.circular(20),
-        border:
-        Border.all(color: const Color(0xFF00F2FE).withOpacity(0.25)),
+        border: Border.all(color: const Color(0xFF00F2FE).withOpacity(0.25)),
       ),
       child: Row(
         children: [
@@ -764,34 +878,43 @@ class _NextHaltCard extends StatelessWidget {
             decoration: BoxDecoration(
               color: const Color(0xFF00F2FE).withOpacity(0.12),
               shape: BoxShape.circle,
-              border:
-              Border.all(color: const Color(0xFF00F2FE).withOpacity(0.5)),
+              border: Border.all(
+                color: const Color(0xFF00F2FE).withOpacity(0.5),
+              ),
             ),
-            child: const Icon(Icons.arrow_forward_rounded,
-                color: Color(0xFF00F2FE), size: 20),
+            child: const Icon(
+              Icons.arrow_forward_rounded,
+              color: Color(0xFF00F2FE),
+              size: 20,
+            ),
           ),
           const SizedBox(width: 14),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text('NEXT HALT',
-                    style: GoogleFonts.inter(
-                        color: Colors.white38,
-                        fontSize: 9,
-                        letterSpacing: 1.5,
-                        fontWeight: FontWeight.w800)),
+                Text(
+                  'NEXT HALT',
+                  style: GoogleFonts.inter(
+                    color: Colors.white38,
+                    fontSize: 9,
+                    letterSpacing: 1.5,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
                 const SizedBox(height: 2),
-                Text(nextHalt.name,
-                    style: GoogleFonts.inter(
-                        color: Colors.white,
-                        fontWeight: FontWeight.w900,
-                        fontSize: 14)),
+                Text(
+                  nextHalt.name,
+                  style: GoogleFonts.inter(
+                    color: Colors.white,
+                    fontWeight: FontWeight.w900,
+                    fontSize: 14,
+                  ),
+                ),
                 const SizedBox(height: 2),
                 Text(
                   '${nextHalt.code} • ${nextHalt.distance?.toStringAsFixed(1) ?? '—'} km from origin',
-                  style:
-                  GoogleFonts.inter(color: Colors.white54, fontSize: 10),
+                  style: GoogleFonts.inter(color: Colors.white54, fontSize: 10),
                 ),
               ],
             ),
@@ -799,21 +922,28 @@ class _NextHaltCard extends StatelessWidget {
           Column(
             crossAxisAlignment: CrossAxisAlignment.end,
             children: [
-              Text('ETA',
-                  style: GoogleFonts.inter(
-                      color: Colors.white38,
-                      fontSize: 9,
-                      fontWeight: FontWeight.w800)),
+              Text(
+                'ETA',
+                style: GoogleFonts.inter(
+                  color: Colors.white38,
+                  fontSize: 9,
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
               const SizedBox(height: 2),
-              Text(etaText,
-                  style: GoogleFonts.inter(
-                      color: const Color(0xFF00F2FE),
-                      fontWeight: FontWeight.w900,
-                      fontSize: 16)),
+              Text(
+                etaText,
+                style: GoogleFonts.inter(
+                  color: const Color(0xFF00F2FE),
+                  fontWeight: FontWeight.w900,
+                  fontSize: 16,
+                ),
+              ),
               if (stop.platform != null)
-                Text('PF ${stop.platform}',
-                    style: GoogleFonts.inter(
-                        color: Colors.white54, fontSize: 10)),
+                Text(
+                  'PF ${stop.platform}',
+                  style: GoogleFonts.inter(color: Colors.white54, fontSize: 10),
+                ),
             ],
           ),
         ],
@@ -826,8 +956,12 @@ class _NextHaltCard extends StatelessWidget {
 // COACH STRIP
 // ═════════════════════════════════════════════════════════════════════
 class _CoachStrip extends StatelessWidget {
+  final String trainName;
+  final String trainType;
   final List coaches;
-  const _CoachStrip({required this.coaches});
+  String? officialLivery;
+
+  _CoachStrip({required this.coaches, required this.trainName, required this.trainType, this.officialLivery});
 
   @override
   Widget build(BuildContext context) {
@@ -843,64 +977,36 @@ class _CoachStrip extends StatelessWidget {
         children: [
           Row(
             children: [
-              const Icon(Icons.view_column_rounded,
-                  color: Color(0xFF00F2FE), size: 14),
+              const Icon(
+                Icons.view_column_rounded,
+                color: Color(0xFF00F2FE),
+                size: 14,
+              ),
               const SizedBox(width: 6),
-              Text('COACH COMPOSITION',
-                  style: GoogleFonts.inter(
-                      color: Colors.white70,
-                      fontSize: 10,
-                      fontWeight: FontWeight.w900,
-                      letterSpacing: 1.2)),
+              Text(
+                'COACH COMPOSITION',
+                style: GoogleFonts.inter(
+                  color: Colors.white70,
+                  fontSize: 10,
+                  fontWeight: FontWeight.w900,
+                  letterSpacing: 1.2,
+                ),
+              ),
               const Spacer(),
-              Text('${coaches.length} coaches',
-                  style: GoogleFonts.inter(
-                      color: Colors.white38, fontSize: 10)),
+              Text(
+                '${coaches.length} coaches',
+                style: GoogleFonts.inter(color: Colors.white38, fontSize: 10),
+              ),
             ],
           ),
           const SizedBox(height: 12),
           SizedBox(
-            height: 62,
-            child: ListView.separated(
-              scrollDirection: Axis.horizontal,
-              itemCount: coaches.length,
-              separatorBuilder: (_, __) => const SizedBox(width: 6),
-              itemBuilder: (_, i) {
-                final c = coaches[i];
-                final cat = c.category as String;
-                final code = c.code as String;
-                final isLoco = cat == 'LOCO' || cat == 'EOG';
-                final color =
-                isLoco ? Colors.white38 : const Color(0xFF00F2FE);
-                return Container(
-                  width: 50,
-                  padding:
-                  const EdgeInsets.symmetric(vertical: 8, horizontal: 6),
-                  decoration: BoxDecoration(
-                    color: isLoco
-                        ? Colors.white.withOpacity(0.04)
-                        : const Color(0xFF00F2FE).withOpacity(0.08),
-                    borderRadius: BorderRadius.circular(10),
-                    border: Border.all(color: color.withOpacity(0.3)),
-                  ),
-                  child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      Text(code,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: GoogleFonts.inter(
-                              color: isLoco ? Colors.white54 : Colors.white,
-                              fontWeight: FontWeight.w900,
-                              fontSize: 11)),
-                      const SizedBox(height: 2),
-                      Text(cat,
-                          style:
-                          GoogleFonts.inter(color: color, fontSize: 9)),
-                    ],
-                  ),
-                );
-              },
+            height: 102,
+            child:StaticTrainRakeView(
+              trainName: trainName,
+              trainType:trainType,
+              officialLivery: officialLivery,
+              coaches: coaches,
             ),
           ),
         ],
@@ -926,19 +1032,26 @@ class _RouteTimeline extends StatelessWidget {
           padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 8),
           child: Row(
             children: [
-              const Icon(Icons.list_alt_rounded,
-                  color: Color(0xFF00F2FE), size: 14),
+              const Icon(
+                Icons.list_alt_rounded,
+                color: Color(0xFF00F2FE),
+                size: 14,
+              ),
               const SizedBox(width: 6),
-              Text('FULL ROUTE',
-                  style: GoogleFonts.inter(
-                      color: Colors.white70,
-                      fontSize: 10,
-                      fontWeight: FontWeight.w900,
-                      letterSpacing: 1.2)),
+              Text(
+                'FULL ROUTE',
+                style: GoogleFonts.inter(
+                  color: Colors.white70,
+                  fontSize: 10,
+                  fontWeight: FontWeight.w900,
+                  letterSpacing: 1.2,
+                ),
+              ),
               const Spacer(),
-              Text('${data.route.length} stops',
-                  style: GoogleFonts.inter(
-                      color: Colors.white38, fontSize: 10)),
+              Text(
+                '${data.route.length} stops',
+                style: GoogleFonts.inter(color: Colors.white38, fontSize: 10),
+              ),
             ],
           ),
         ),
@@ -946,8 +1059,7 @@ class _RouteTimeline extends StatelessWidget {
         ...data.route.asMap().entries.map((e) {
           final i = e.key;
           final s = e.value;
-          final isCurrent =
-              s.stationCode == data.currentLocation.stationCode;
+          final isCurrent = s.stationCode == data.currentLocation.stationCode;
           final isPast = cur >= 0 && i < cur;
           return _RouteRow(
             stop: s,
@@ -983,8 +1095,7 @@ class _RouteRow extends StatelessWidget {
         ? const Color(0xFF00F2FE)
         : (isPast ? Colors.white24 : Colors.white);
 
-    final arrivalText =
-        TrainRouteStop.formatHm(stop.effectiveArrival) ?? '--';
+    final arrivalText = TrainRouteStop.formatHm(stop.effectiveArrival) ?? '--';
     final departureText = stop.isHalt
         ? TrainRouteStop.formatHm(stop.effectiveDeparture)
         : null;
@@ -1000,23 +1111,32 @@ class _RouteRow extends StatelessWidget {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.end,
                 children: [
-                  Text(arrivalText,
-                      style: GoogleFonts.inter(
-                          color: textColor,
-                          fontWeight: FontWeight.w900,
-                          fontSize: 12)),
+                  Text(
+                    arrivalText,
+                    style: GoogleFonts.inter(
+                      color: textColor,
+                      fontWeight: FontWeight.w900,
+                      fontSize: 12,
+                    ),
+                  ),
                   if (departureText != null)
-                    Text(departureText,
-                        style: GoogleFonts.inter(
-                            color: Colors.white38,
-                            fontSize: 9,
-                            fontWeight: FontWeight.w600)),
+                    Text(
+                      departureText,
+                      style: GoogleFonts.inter(
+                        color: Colors.white38,
+                        fontSize: 9,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
                   if (stop.arrivalDay > 1)
-                    Text('D${stop.arrivalDay}',
-                        style: GoogleFonts.inter(
-                            color: Colors.white24,
-                            fontSize: 8,
-                            fontWeight: FontWeight.w900)),
+                    Text(
+                      'D${stop.arrivalDay}',
+                      style: GoogleFonts.inter(
+                        color: Colors.white24,
+                        fontSize: 8,
+                        fontWeight: FontWeight.w900,
+                      ),
+                    ),
                 ],
               ),
             ),
@@ -1031,8 +1151,8 @@ class _RouteRow extends StatelessWidget {
                     color: isFirst
                         ? Colors.transparent
                         : (isPast
-                        ? const Color(0xFF00F2FE).withOpacity(0.3)
-                        : Colors.white.withOpacity(0.08)),
+                              ? const Color(0xFF00F2FE).withOpacity(0.3)
+                              : Colors.white.withOpacity(0.08)),
                   ),
                 ),
                 Container(
@@ -1043,27 +1163,28 @@ class _RouteRow extends StatelessWidget {
                     color: isCurrent
                         ? Colors.transparent
                         : (isPast
-                        ? const Color(0xFF00F2FE).withOpacity(0.5)
-                        : (stop.isHalt
-                        ? Colors.white70
-                        : Colors.white30)),
+                              ? const Color(0xFF00F2FE).withOpacity(0.5)
+                              : (stop.isHalt
+                                    ? Colors.white70
+                                    : Colors.white30)),
                     border: isCurrent
-                        ? Border.all(
-                        color: const Color(0xFF00F2FE), width: 3)
+                        ? Border.all(color: const Color(0xFF00F2FE), width: 3)
                         : (isPast
-                        ? Border.all(
-                        color:
-                        const Color(0xFF00F2FE).withOpacity(0.4),
-                        width: 2)
-                        : null),
+                              ? Border.all(
+                                  color: const Color(
+                                    0xFF00F2FE,
+                                  ).withOpacity(0.4),
+                                  width: 2,
+                                )
+                              : null),
                     boxShadow: isCurrent
                         ? [
-                      BoxShadow(
-                          color: const Color(0xFF00F2FE)
-                              .withOpacity(0.6),
-                          blurRadius: 10,
-                          spreadRadius: 1)
-                    ]
+                            BoxShadow(
+                              color: const Color(0xFF00F2FE).withOpacity(0.6),
+                              blurRadius: 10,
+                              spreadRadius: 1,
+                            ),
+                          ]
                         : null,
                   ),
                 ),
@@ -1073,8 +1194,8 @@ class _RouteRow extends StatelessWidget {
                     color: isLast
                         ? Colors.transparent
                         : (isPast
-                        ? const Color(0xFF00F2FE).withOpacity(0.3)
-                        : Colors.white.withOpacity(0.08)),
+                              ? const Color(0xFF00F2FE).withOpacity(0.3)
+                              : Colors.white.withOpacity(0.08)),
                   ),
                 ),
               ],
@@ -1086,15 +1207,15 @@ class _RouteRow extends StatelessWidget {
               child: Container(
                 padding: isCurrent
                     ? const EdgeInsets.all(10)
-                    : const EdgeInsets.symmetric(
-                    vertical: 4, horizontal: 0),
+                    : const EdgeInsets.symmetric(vertical: 4, horizontal: 0),
                 decoration: isCurrent
                     ? BoxDecoration(
-                  color: const Color(0xFF00F2FE).withOpacity(0.07),
-                  borderRadius: BorderRadius.circular(12),
-                  border: Border.all(
-                      color: const Color(0xFF00F2FE).withOpacity(0.3)),
-                )
+                        color: const Color(0xFF00F2FE).withOpacity(0.07),
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(
+                          color: const Color(0xFF00F2FE).withOpacity(0.3),
+                        ),
+                      )
                     : null,
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
@@ -1107,54 +1228,71 @@ class _RouteRow extends StatelessWidget {
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
                             style: GoogleFonts.inter(
-                                color: textColor,
-                                fontWeight: FontWeight.w800,
-                                fontSize: 13),
+                              color: textColor,
+                              fontWeight: FontWeight.w800,
+                              fontSize: 13,
+                            ),
                           ),
                         ),
                         if (stop.platform != null)
                           Container(
                             padding: const EdgeInsets.symmetric(
-                                horizontal: 6, vertical: 2),
+                              horizontal: 6,
+                              vertical: 2,
+                            ),
                             decoration: BoxDecoration(
                               color: Colors.white.withOpacity(0.06),
                               borderRadius: BorderRadius.circular(4),
                             ),
-                            child: Text('PF ${stop.platform}',
-                                style: GoogleFonts.inter(
-                                    color: Colors.white70,
-                                    fontSize: 9,
-                                    fontWeight: FontWeight.w800)),
+                            child: Text(
+                              'PF ${stop.platform}',
+                              style: GoogleFonts.inter(
+                                color: Colors.white70,
+                                fontSize: 9,
+                                fontWeight: FontWeight.w800,
+                              ),
+                            ),
                           ),
                       ],
                     ),
                     const SizedBox(height: 2),
                     Row(
                       children: [
-                        Text(stop.stationCode,
-                            style: GoogleFonts.inter(
-                                color: Colors.white38,
-                                fontSize: 10,
-                                fontWeight: FontWeight.w700)),
+                        Text(
+                          stop.stationCode,
+                          style: GoogleFonts.inter(
+                            color: Colors.white38,
+                            fontSize: 10,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
                         const SizedBox(width: 8),
-                        Text('${stop.distance.toStringAsFixed(0)} km',
-                            style: GoogleFonts.inter(
-                                color: Colors.white24, fontSize: 10)),
+                        Text(
+                          '${stop.distance.toStringAsFixed(0)} km',
+                          style: GoogleFonts.inter(
+                            color: Colors.white24,
+                            fontSize: 10,
+                          ),
+                        ),
                         if (stop.isDelayed) ...[
                           const SizedBox(width: 8),
                           Container(
                             padding: const EdgeInsets.symmetric(
-                                horizontal: 6, vertical: 1),
+                              horizontal: 6,
+                              vertical: 1,
+                            ),
                             decoration: BoxDecoration(
                               color: Colors.orangeAccent.withOpacity(0.15),
                               borderRadius: BorderRadius.circular(4),
                             ),
                             child: Text(
-                                '+${stop.delayArrival > 0 ? stop.delayArrival : stop.delayDeparture}m',
-                                style: GoogleFonts.inter(
-                                    color: Colors.orangeAccent,
-                                    fontSize: 9,
-                                    fontWeight: FontWeight.w900)),
+                              '+${stop.delayArrival > 0 ? stop.delayArrival : stop.delayDeparture}m',
+                              style: GoogleFonts.inter(
+                                color: Colors.orangeAccent,
+                                fontSize: 9,
+                                fontWeight: FontWeight.w900,
+                              ),
+                            ),
                           ),
                         ],
                       ],

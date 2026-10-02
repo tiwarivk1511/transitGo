@@ -6,6 +6,7 @@ class TrainFareData {
   final String classCode;
   final int totalFare;
   final int baseFare;
+  final String? fareSource;
 
   /// Optional breakdown — populated when the API returns it.
   final int? reservationCharge;
@@ -24,6 +25,7 @@ class TrainFareData {
     required this.classCode,
     required this.totalFare,
     required this.baseFare,
+    this.fareSource,
     this.reservationCharge,
     this.superfastCharge,
     this.cateringCharge,
@@ -39,26 +41,31 @@ class TrainFareData {
   static int _int(dynamic v, [int fallback = 0]) {
     if (v == null) return fallback;
     if (v is num) return v.toInt();
-    return int.tryParse(v.toString()) ?? fallback;
+    final normalized = v.toString().replaceAll(RegExp(r'[^\d.-]'), '');
+    return num.tryParse(normalized)?.round() ?? fallback;
   }
 
   static int? _intOrNull(dynamic v) {
     if (v == null) return null;
     if (v is num) return v.toInt();
-    return int.tryParse(v.toString());
+    final text = v.toString().trim();
+    if (text.isEmpty || text == '--') return null;
+    final normalized = text.replaceAll(RegExp(r'[^\d.-]'), '');
+    return num.tryParse(normalized)?.round();
   }
 
   // ═══════════════════════════════════════════════════════════════════
   // NTES PARSER (legacy)
   // ═══════════════════════════════════════════════════════════════════
   factory TrainFareData.fromNtes(
-      Map<String, dynamic> data,
-      String train,
-      String src,
-      String dst,
-      String date,
-      String cls,
-      ) {
+    Map<String, dynamic> data,
+    String train,
+    String src,
+    String dst,
+    String date,
+    String cls, {
+    String? requestedQuota,
+  }) {
     final total = _int(data['totalFare']) != 0
         ? _int(data['totalFare'])
         : _int(data['fare']);
@@ -71,13 +78,20 @@ class TrainFareData {
       classCode: cls,
       totalFare: total,
       baseFare: _int(data['baseFare'], total),
-      reservationCharge: _intOrNull(data['reservationCharge']),
-      superfastCharge: _intOrNull(data['superfastCharge']),
-      cateringCharge: _intOrNull(data['cateringCharge']),
-      serviceTax: _intOrNull(data['serviceTax'] ?? data['gst']),
-      tatkalCharge: _intOrNull(data['tatkalCharge']),
-      otherCharges: _intOrNull(data['otherCharges']),
-      quota: data['quota']?.toString(),
+      reservationCharge: _intOrNull(
+        data['reservationCharge'] ?? data['reservation'],
+      ),
+      superfastCharge: _intOrNull(
+        data['superfastCharge'] ?? data['superFastCharge'],
+      ),
+      cateringCharge: _intOrNull(data['cateringCharge'] ?? data['catering']),
+      serviceTax: _intOrNull(data['serviceTax'] ?? data['gst'] ?? data['tax']),
+      tatkalCharge: _intOrNull(data['tatkalCharge'] ?? data['tatkalSurcharge']),
+      otherCharges: _intOrNull(
+        data['otherCharges'] ?? data['miscellaneousCharges'],
+      ),
+      quota: data['quota']?.toString() ?? requestedQuota,
+      fareSource: data['fareSource']?.toString() ?? data['source']?.toString(),
     );
   }
 
@@ -90,27 +104,29 @@ class TrainFareData {
   //   or flat: { "totalFare": ..., "baseFare": ... }
   // ═══════════════════════════════════════════════════════════════════
   factory TrainFareData.fromRailRadar(
-      Map<String, dynamic> data, {
-        required String train,
-        required String from,
-        required String to,
-        required String date,
-        required String classCode,
-      }) {
+    Map<String, dynamic> data, {
+    required String train,
+    required String from,
+    required String to,
+    required String date,
+    required String classCode,
+  }) {
     final fareMap = data['fare'] is Map
         ? Map<String, dynamic>.from(data['fare'] as Map)
         : data;
 
-    final fromMap =
-    data['from'] is Map ? Map<String, dynamic>.from(data['from'] as Map) : const {};
-    final toMap =
-    data['to'] is Map ? Map<String, dynamic>.from(data['to'] as Map) : const {};
+    final fromMap = data['from'] is Map
+        ? Map<String, dynamic>.from(data['from'] as Map)
+        : const {};
+    final toMap = data['to'] is Map
+        ? Map<String, dynamic>.from(data['to'] as Map)
+        : const {};
 
     final total = _int(fareMap['total']) != 0
         ? _int(fareMap['total'])
         : (_int(fareMap['totalFare']) != 0
-        ? _int(fareMap['totalFare'])
-        : _int(fareMap['amount']));
+              ? _int(fareMap['totalFare'])
+              : _int(fareMap['amount']));
 
     final base = _int(fareMap['baseFare']) != 0
         ? _int(fareMap['baseFare'])
@@ -121,30 +137,42 @@ class TrainFareData {
       source: fromMap['code']?.toString() ?? from,
       destination: toMap['code']?.toString() ?? to,
       journeyDate: data['journeyDate']?.toString() ?? date,
-      classCode:
-      (data['class'] ?? classCode).toString().toUpperCase(),
+      classCode: (data['class'] ?? classCode).toString().toUpperCase(),
       totalFare: total,
       baseFare: base,
-      reservationCharge: _intOrNull(fareMap['reservationCharge']),
-      superfastCharge: _intOrNull(fareMap['superfastCharge']),
-      cateringCharge: _intOrNull(fareMap['cateringCharge']),
-      serviceTax: _intOrNull(fareMap['serviceTax'] ?? fareMap['gst']),
-      tatkalCharge: _intOrNull(fareMap['tatkalCharge']),
-      otherCharges: _intOrNull(fareMap['otherCharges']),
+      reservationCharge: _intOrNull(
+        fareMap['reservationCharge'] ?? fareMap['reservation'],
+      ),
+      superfastCharge: _intOrNull(
+        fareMap['superfastCharge'] ?? fareMap['superFastCharge'],
+      ),
+      cateringCharge: _intOrNull(
+        fareMap['cateringCharge'] ?? fareMap['catering'],
+      ),
+      serviceTax: _intOrNull(
+        fareMap['serviceTax'] ?? fareMap['gst'] ?? fareMap['tax'],
+      ),
+      tatkalCharge: _intOrNull(
+        fareMap['tatkalCharge'] ?? fareMap['tatkalSurcharge'],
+      ),
+      otherCharges: _intOrNull(
+        fareMap['otherCharges'] ?? fareMap['miscellaneousCharges'],
+      ),
       quota: data['quota']?.toString(),
+      fareSource: data['fareSource']?.toString() ?? data['source']?.toString(),
     );
   }
 
   /// Auto-detect: RailRadar responses typically nest fare under `fare`
   /// or contain `from`/`to` maps.
   factory TrainFareData.parse(
-      Map<String, dynamic> data, {
-        required String train,
-        required String from,
-        required String to,
-        required String date,
-        required String classCode,
-      }) {
+    Map<String, dynamic> data, {
+    required String train,
+    required String from,
+    required String to,
+    required String date,
+    required String classCode,
+  }) {
     if (data['fare'] is Map ||
         data['from'] is Map ||
         data['total'] != null ||
@@ -158,19 +186,17 @@ class TrainFareData {
         classCode: classCode,
       );
     }
-    return TrainFareData.fromNtes(
-        data, train, from, to, date, classCode);
+    return TrainFareData.fromNtes(data, train, from, to, date, classCode);
   }
 
   bool get hasBreakdown =>
       reservationCharge != null ||
-          superfastCharge != null ||
-          cateringCharge != null ||
-          serviceTax != null ||
-          tatkalCharge != null ||
-          otherCharges != null;
+      superfastCharge != null ||
+      cateringCharge != null ||
+      serviceTax != null ||
+      tatkalCharge != null ||
+      otherCharges != null;
 
   @override
-  String toString() =>
-      'TrainFareData($trainNumber, $classCode, ₹$totalFare)';
+  String toString() => 'TrainFareData($trainNumber, $classCode, ₹$totalFare)';
 }

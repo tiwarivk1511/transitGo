@@ -32,16 +32,29 @@ class LiveStreamSource {
       String trainNumber, {
         Duration interval = const Duration(seconds: 30),
         bool fastFirstTick = true,
-        bool includeGeometry = false,
+        bool includeGeometry = true,
       }) {
     return _pollStream<Map<String, dynamic>>(
       key: 'live:$trainNumber:geo:$includeGeometry',
       interval: interval,
       fastFirstTick: fastFirstTick,
-      fetch: () => RailRadarSource.liveTracking(
-        trainNumber,
-        includeGeometry: includeGeometry,
-      ),
+      fetch: () async {
+        final live = await RailRadarSource.liveTracking(
+          trainNumber,
+          includeGeometry: includeGeometry,
+        );
+        if (live != null) {
+          final m = Map<String, dynamic>.from(live);
+          if (m['geometry'] == null || !(m['geometry'] is Map)) {
+            final geo = await RailRadarSource.trainRouteGeometry(trainNumber);
+            if (geo != null) {
+              m['geometry'] = geo;
+            }
+          }
+          return m;
+        }
+        return null;
+      },
     );
   }
 

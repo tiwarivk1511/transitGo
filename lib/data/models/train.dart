@@ -3,19 +3,20 @@
 // ═════════════════════════════════════════════════════════════════════
 import 'package:latlong2/latlong.dart';
 
+import '../sources/station_source.dart';
 import 'coach.dart';
 
 class TrainTracking {
   final String trainNumber;
   final String trainName;
-  final String trainType;      // "Superfast Express"
-  final String category;       // "Express"
-  final List<String> runDays;  // ['mon','tue',...]
+  final String trainType; // "Superfast Express"
+  final String category; // "Express"
+  final List<String> runDays; // ['mon','tue',...]
 
   final TrainStopRef? source;
   final TrainStopRef? destination;
 
-  final double? distance;      // total route km
+  final double? distance; // total route km
   final int? durationMin;
   final double? avgSpeed;
   final double? maxSpeed;
@@ -25,8 +26,8 @@ class TrainTracking {
   final String? rawCoachPosition;
 
   final bool isLive;
-  final String trackingMode;   // "real-time" | "predicted"
-  final String status;         // "not-started" | "running" | "reached"
+  final String trackingMode; // "real-time" | "predicted"
+  final String status; // "not-started" | "running" | "reached"
   final int delayMinutes;
   final DateTime? lastUpdatedAt;
   final DateTime? startDate;
@@ -72,18 +73,24 @@ class TrainTracking {
 
   // ── Factories ──────────────────────────────────────────────────
   factory TrainTracking.fromNtes(
-      Map<String, dynamic> data, String trainNumber) {
-    final routeRaw =
-    (data['stationList'] ?? data['route'] ?? []) as List?;
+    Map<String, dynamic> data,
+    String trainNumber,
+  ) {
+    final routeRaw = (data['stationList'] ?? data['route'] ?? []) as List?;
     final route = <TrainRouteStop>[];
     if (routeRaw != null) {
       for (var i = 0; i < routeRaw.length; i++) {
         if (routeRaw[i] is! Map) continue;
-        route.add(TrainRouteStop.fromNtes(
-            Map<String, dynamic>.from(routeRaw[i] as Map), i + 1));
+        route.add(
+          TrainRouteStop.fromNtes(
+            Map<String, dynamic>.from(routeRaw[i] as Map),
+            i + 1,
+          ),
+        );
       }
     }
-    final current = data['currentStationCode']?.toString() ??
+    final current =
+        data['currentStationCode']?.toString() ??
         data['curStn']?.toString() ??
         (route.isNotEmpty ? route.first.stationCode : '');
 
@@ -103,7 +110,9 @@ class TrainTracking {
   }
 
   factory TrainTracking.fromRailRadar(
-      Map<String, dynamic> data, String trainNumber) {
+    Map<String, dynamic> data,
+    String trainNumber,
+  ) {
     final trainMap = data['train'] is Map
         ? Map<String, dynamic>.from(data['train'] as Map)
         : const <String, dynamic>{};
@@ -114,8 +123,12 @@ class TrainTracking {
     if (routeRaw != null) {
       for (var i = 0; i < routeRaw.length; i++) {
         if (routeRaw[i] is! Map) continue;
-        route.add(TrainRouteStop.fromRailRadar(
-            Map<String, dynamic>.from(routeRaw[i] as Map), i + 1));
+        route.add(
+          TrainRouteStop.fromRailRadar(
+            Map<String, dynamic>.from(routeRaw[i] as Map),
+            i + 1,
+          ),
+        );
       }
     }
 
@@ -129,13 +142,12 @@ class TrainTracking {
 
     // ── Run days ──────────────────────────────────────────────────
     final runDays = (trainMap['runDays'] is List)
-        ? (trainMap['runDays'] as List)
-        .map((e) => e.toString())
-        .toList()
+        ? (trainMap['runDays'] as List).map((e) => e.toString()).toList()
         : <String>[];
 
     // ── Coach composition ────────────────────────────────────────
-    final rawCoach = trainMap['coachPosition']?.toString() ??
+    final rawCoach =
+        trainMap['coachPosition']?.toString() ??
         data['coachPosition']?.toString();
     final coaches = <CoachInfo>[];
     if (rawCoach != null && rawCoach.isNotEmpty) {
@@ -159,82 +171,60 @@ class TrainTracking {
       );
     }
 
-    // ── currentLocation ─────────────────────────────────────────
-    final locMap = data['currentLocation'] is Map
-        ? Map<String, dynamic>.from(data['currentLocation'] as Map)
-        : const <String, dynamic>{};
-
     // ═══════════════════════════════════════════════════════════════
-    // GEOMETRY — polyline of the entire route
-    //
-    // RailRadar returns:
-    //   "geometry": {
-    //     "format": "geojson",
-    //     "geojson": {
-    //       "type": "Feature",
-    //       "geometry": {
-    //         "type": "LineString",
-    //         "coordinates": [[lng, lat], [lng, lat], ...]
-    //       }
-    //     }
-    //   }
-    // ═══════════════════════════════════════════════════════════════
-    final geoList = <LatLng>[];
-    final geo = data['geometry'];
-    if (geo is Map) {
-      final gj = geo['geojson'];
-      if (gj is Map) {
-        final g = gj['geometry'];
-        if (g is Map && g['coordinates'] is List) {
-          for (final c in (g['coordinates'] as List)) {
-            if (c is List && c.length >= 2) {
-              final lngRaw = c[0];
-              final latRaw = c[1];
-              if (lngRaw is num && latRaw is num) {
-                // GeoJSON is [lng, lat] — LatLng wants (lat, lng)
-                geoList.add(LatLng(
-                  latRaw.toDouble(),
-                  lngRaw.toDouble(),
-                ));
-              }
-            }
-          }
-        }
-      }
-    }
-
-    // ═══════════════════════════════════════════════════════════════
-    // GEO STOPS — station coordinates (from stops=true)
-    //
-    // Shape:
-    //   "stops": [
-    //     { "sequence": 1, "code": "PRYJ", "name": "Prayagraj Jn",
-    //       "lat": 25.44572, "lng": 81.82639, ... }, ...
-    //   ]
+    // GEO STOPS — station coordinates (from stops=true or route)
     // ═══════════════════════════════════════════════════════════════
     final stops = <TrainStopRef>[];
-    final rawStops = data['stops'];
+    final rawStops = data['stops'] ?? data['route'];
     if (rawStops is List) {
       for (final s in rawStops) {
         if (s is! Map) continue;
         final sm = Map<String, dynamic>.from(s);
-        final lat = _dbl(sm['lat'] ?? sm['latitude']);
-        final lng = _dbl(sm['lng'] ?? sm['lon'] ?? sm['longitude']);
-        if (lat == null || lng == null) continue;
-        stops.add(TrainStopRef(
-          code: (sm['code'] ?? sm['stationCode'] ?? '').toString(),
-          name: (sm['name'] ?? sm['stationName'] ?? '').toString(),
-          sequence: _int(sm['sequence']),
-          distance: _dbl(sm['distance']),
-          latLng: LatLng(lat, lng),
-        ));
+        final stn = sm['station'] is Map
+            ? Map<String, dynamic>.from(sm['station'] as Map)
+            : null;
+        final code = stn != null
+            ? (stn['code'] ?? stn['stationCode'] ?? '').toString()
+            : (sm['code'] ?? sm['stationCode'] ?? '').toString();
+        final name = stn != null
+            ? (stn['name'] ?? sm['stationName'] ?? '').toString()
+            : (sm['name'] ?? sm['stationName'] ?? '').toString();
+
+        final lat = _dbl(stn?['lat'] ?? sm['lat'] ?? sm['latitude']);
+        final lng = _dbl(
+          stn?['lng'] ??
+              stn?['lon'] ??
+              sm['lng'] ??
+              sm['lon'] ??
+              sm['longitude'],
+        );
+
+        LatLng? stnLatLng;
+        if (lat != null && lng != null) {
+          stnLatLng = LatLng(lat, lng);
+        } else if (code.isNotEmpty) {
+          final sObj = StationSource.byCode(code);
+          if (sObj != null && sObj.hasCoordinates) {
+            stnLatLng = LatLng(sObj.latitude!, sObj.longitude!);
+          }
+        }
+
+        if (stnLatLng == null) continue;
+        stops.add(
+          TrainStopRef(
+            code: code,
+            name: name.isNotEmpty
+                ? name
+                : (StationSource.byCode(code)?.name ?? code),
+            sequence: _int(sm['sequence']),
+            distance: _dbl(sm['distance']),
+            latLng: stnLatLng,
+          ),
+        );
       }
     }
 
-    // ═══════════════════════════════════════════════════════════════
-    // Fallback: if `stops` wasn't present, try to build geoStops by
-    // matching route codes against the source/destination coords.
-    // ═══════════════════════════════════════════════════════════════
+    // Fallback: if `stops` wasn't present, try to build geoStops by matching route coords.
     if (stops.isEmpty &&
         srcMap.isNotEmpty &&
         dstMap.isNotEmpty &&
@@ -245,55 +235,94 @@ class TrainTracking {
       final dstLat = _dbl(dstMap['lat']);
       final dstLng = _dbl(dstMap['lng']);
       if (srcLat != null && srcLng != null) {
-        stops.add(TrainStopRef(
-          code: srcMap['code']?.toString() ?? '',
-          name: srcMap['name']?.toString() ?? '',
-          sequence: 1,
-          latLng: LatLng(srcLat, srcLng),
-        ));
+        stops.add(
+          TrainStopRef(
+            code: srcMap['code']?.toString() ?? '',
+            name: srcMap['name']?.toString() ?? '',
+            sequence: 1,
+            latLng: LatLng(srcLat, srcLng),
+          ),
+        );
       }
       if (dstLat != null && dstLng != null) {
-        stops.add(TrainStopRef(
-          code: dstMap['code']?.toString() ?? '',
-          name: dstMap['name']?.toString() ?? '',
-          sequence: route.length,
-          latLng: LatLng(dstLat, dstLng),
-        ));
+        stops.add(
+          TrainStopRef(
+            code: dstMap['code']?.toString() ?? '',
+            name: dstMap['name']?.toString() ?? '',
+            sequence: route.length,
+            latLng: LatLng(dstLat, dstLng),
+          ),
+        );
+      }
+    }
+
+    // ── currentLocation ─────────────────────────────────────────
+    final locMap = data['currentLocation'] is Map
+        ? Map<String, dynamic>.from(data['currentLocation'] as Map)
+        : const <String, dynamic>{};
+
+    final apiLocLatLng =
+        _parseLatLng(locMap) ??
+        _parseLatLng(locMap['location']) ??
+        _parseLatLng(locMap['position']) ??
+        _parseLatLng(data['location']) ??
+        _parseLatLng(data['position']);
+    var locLatLng = apiLocLatLng;
+    if (locLatLng == null) {
+      final seq = _int(locMap['sequence']);
+      final code = locMap['stationCode']?.toString() ?? '';
+      for (final stp in stops) {
+        if ((seq > 0 && stp.sequence == seq) ||
+            (code.isNotEmpty && stp.code.toUpperCase() == code.toUpperCase())) {
+          locLatLng = stp.latLng;
+          break;
+        }
+      }
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // GEOMETRY — polyline of the entire route
+    // ═══════════════════════════════════════════════════════════════
+    final geoList = <LatLng>[];
+    final geo = data['geometry'];
+    if (geo is Map) {
+      final gj = geo['geojson'];
+      if (gj is Map) {
+        final g = gj['geometry'];
+        if (g is Map && g['coordinates'] is List) {
+          for (final c in (g['coordinates'] as List)) {
+            final point = _parseLatLng(c);
+            if (point != null) geoList.add(point);
+          }
+        }
       }
     }
 
     return TrainTracking(
       trainNumber: trainMap['number']?.toString() ?? trainNumber,
-      trainName: trainMap['name']?.toString() ??
-          data['trainName']?.toString() ??
-          '',
+      trainName:
+          trainMap['name']?.toString() ?? data['trainName']?.toString() ?? '',
       trainType: trainMap['type']?.toString() ?? '',
       category: trainMap['category']?.toString() ?? '',
       runDays: runDays,
       source: srcMap.isEmpty
           ? null
           : TrainStopRef(
-        code: srcMap['code']?.toString() ?? '',
-        name: srcMap['name']?.toString() ?? '',
-        latLng: (srcMap['lat'] != null && srcMap['lng'] != null)
-            ? LatLng(
-          _dbl(srcMap['lat'])!,
-          _dbl(srcMap['lng'])!,
-        )
-            : null,
-      ),
+              code: srcMap['code']?.toString() ?? '',
+              name: srcMap['name']?.toString() ?? '',
+              latLng: (srcMap['lat'] != null && srcMap['lng'] != null)
+                  ? LatLng(_dbl(srcMap['lat'])!, _dbl(srcMap['lng'])!)
+                  : null,
+            ),
       destination: dstMap.isEmpty
           ? null
           : TrainStopRef(
-        code: dstMap['code']?.toString() ?? '',
-        name: dstMap['name']?.toString() ?? '',
-        latLng: (dstMap['lat'] != null && dstMap['lng'] != null)
-            ? LatLng(
-          _dbl(dstMap['lat'])!,
-          _dbl(dstMap['lng'])!,
-        )
-            : null,
-      ),
+              code: dstMap['code']?.toString() ?? '',
+              name: dstMap['name']?.toString() ?? '',
+              latLng: (dstMap['lat'] != null && dstMap['lng'] != null)
+                  ? LatLng(_dbl(dstMap['lat'])!, _dbl(dstMap['lng'])!)
+                  : null,
+            ),
       distance: _dbl(trainMap['distance']),
       durationMin: _int(trainMap['duration']),
       avgSpeed: _dbl(trainMap['avgSpeed']),
@@ -316,11 +345,23 @@ class TrainTracking {
         status: locMap['status']?.toString() ?? '',
         isHalt: locMap['isHalt'] == true,
         distanceFromOriginKm: _dbl(locMap['distanceFromOriginKm']),
-        distanceFromLastStationKm:
-        _dbl(locMap['distanceFromLastStationKm']),
+        distanceFromLastStationKm: _dbl(locMap['distanceFromLastStationKm']),
         segmentProgress: _dbl(locMap['segmentProgress']),
-        speedKmh: _dbl(locMap['speedKmh']),
+        speedKmh: _dbl(
+          locMap['speedKmh'] ??
+              locMap['speedKmph'] ??
+              locMap['currentSpeedKmh'] ??
+              locMap['currentSpeed'] ??
+              locMap['speed'] ??
+              data['speedKmh'] ??
+              data['speedKmph'] ??
+              data['currentSpeedKmh'] ??
+              data['currentSpeed'] ??
+              data['speed'],
+        ),
         delayMinutes: _int(locMap['delayMinutes']),
+        latLng: locLatLng,
+        hasGpsCoordinates: apiLocLatLng != null,
       ),
       route: route,
       routeGeometry: geoList,
@@ -328,8 +369,7 @@ class TrainTracking {
     );
   }
 
-  factory TrainTracking.parse(
-      Map<String, dynamic> data, String trainNumber) {
+  factory TrainTracking.parse(Map<String, dynamic> data, String trainNumber) {
     if (data['train'] is Map || data['currentLocation'] is Map) {
       return TrainTracking.fromRailRadar(data, trainNumber);
     }
@@ -340,7 +380,8 @@ class TrainTracking {
   int get currentIndex {
     if (currentLocation.stationCode.isEmpty) return -1;
     return route.indexWhere(
-            (s) => s.stationCode == currentLocation.stationCode);
+      (s) => s.stationCode == currentLocation.stationCode,
+    );
   }
 
   /// 0.0 … 1.0
@@ -387,8 +428,7 @@ class TrainTracking {
   String get currentStationCode => currentLocation.stationCode;
 
   /// True if we have enough data to render the map.
-  bool get hasMapData =>
-      routeGeometry.isNotEmpty || geoStops.isNotEmpty;
+  bool get hasMapData => routeGeometry.isNotEmpty || geoStops.isNotEmpty;
 
   static int _int(dynamic v, [int fallback = 0]) {
     if (v == null) return fallback;
@@ -405,6 +445,37 @@ class TrainTracking {
   static DateTime? _dt(dynamic v) {
     if (v == null) return null;
     return DateTime.tryParse(v.toString());
+  }
+
+  static LatLng? _parseLatLng(dynamic value) {
+    double? lat;
+    double? lng;
+    if (value is Map) {
+      lat = _dbl(value['lat'] ?? value['latitude']);
+      lng = _dbl(value['lng'] ?? value['lon'] ?? value['longitude']);
+      if (lat == null || lng == null) {
+        final coordinates = value['coordinates'];
+        if (coordinates is List && coordinates.length >= 2) {
+          lng = _dbl(coordinates[0]);
+          lat = _dbl(coordinates[1]);
+        }
+      }
+    } else if (value is List && value.length >= 2) {
+      lng = _dbl(value[0]);
+      lat = _dbl(value[1]);
+    }
+
+    if (lat == null ||
+        lng == null ||
+        !lat.isFinite ||
+        !lng.isFinite ||
+        lat < -90 ||
+        lat > 90 ||
+        lng < -180 ||
+        lng > 180) {
+      return null;
+    }
+    return LatLng(lat, lng);
   }
 }
 
@@ -446,6 +517,8 @@ class LiveLocation {
   final double? segmentProgress;
   final double? speedKmh;
   final int delayMinutes;
+  final LatLng? latLng;
+  final bool hasGpsCoordinates;
 
   const LiveLocation({
     this.stationCode = '',
@@ -458,6 +531,8 @@ class LiveLocation {
     this.segmentProgress,
     this.speedKmh,
     this.delayMinutes = 0,
+    this.latLng,
+    this.hasGpsCoordinates = false,
   });
 }
 
@@ -526,16 +601,28 @@ class TrainRouteStop {
 
   // ── RailRadar factory ─────────────────────────────────────────
   factory TrainRouteStop.fromRailRadar(
-      Map<String, dynamic> j, int fallbackSeq) {
+    Map<String, dynamic> j,
+    int fallbackSeq,
+  ) {
+    final stn = j['station'] is Map
+        ? Map<String, dynamic>.from(j['station'] as Map)
+        : null;
+    final code = stn != null
+        ? (stn['code'] ?? stn['stationCode'] ?? '').toString()
+        : (j['stationCode'] ?? j['code'] ?? '').toString();
+    final name = stn != null
+        ? (stn['name'] ?? stn['stationName'] ?? '').toString()
+        : (j['stationName'] ?? j['name'] ?? '').toString();
+
     return TrainRouteStop(
       sequence: _int(j['sequence'], fallbackSeq),
-      stationCode: j['stationCode']?.toString() ?? '',
-      stationName: j['stationName']?.toString() ?? '',
+      stationCode: code,
+      stationName: name,
       isHalt: j['isHalt'] == true,
       status: j['status']?.toString() ?? 'upcoming',
       coachPosition: j['coachPosition']?.toString(),
-      scheduledArrival: _dt(j['scheduledArrival']),
-      scheduledDeparture: _dt(j['scheduledDeparture']),
+      scheduledArrival: _dt(j['scheduledArrival'] ?? j['arrival']),
+      scheduledDeparture: _dt(j['scheduledDeparture'] ?? j['departure']),
       actualArrival: _dt(j['actualArrival']),
       actualDeparture: _dt(j['actualDeparture']),
       arrivalDay: _int(j['arrivalDay'], 1),
@@ -550,26 +637,25 @@ class TrainRouteStop {
   }
 
   // ── Legacy getters (kept for backward compatibility) ──────────
-  /// "HH:mm" scheduled arrival (IST) or null.
+  /// Scheduled arrival in 12-hour IST format or null.
   String? get arrival => _fmtTime(scheduledArrival);
 
-  /// "HH:mm" scheduled departure (IST) or null.
+  /// Scheduled departure in 12-hour IST format or null.
   String? get departure => _fmtTime(scheduledDeparture);
 
-  /// "HH:mm" actual arrival (IST) or null.
+  /// Actual arrival in 12-hour IST format or null.
   String? get actualArrivalTime => _fmtTime(actualArrival);
 
-  /// "HH:mm" actual departure (IST) or null.
+  /// Actual departure in 12-hour IST format or null.
   String? get actualDepartureTime => _fmtTime(actualDeparture);
 
   /// Convenience alias for arrivalDay.
   int get day => arrivalDay;
 
   /// Convenience alias — non-null only when the stop is delayed.
-  int? get delayMinutes =>
-      (delayArrival > 0 || delayDeparture > 0)
-          ? (delayArrival > delayDeparture ? delayArrival : delayDeparture)
-          : null;
+  int? get delayMinutes => (delayArrival > 0 || delayDeparture > 0)
+      ? (delayArrival > delayDeparture ? delayArrival : delayDeparture)
+      : null;
 
   bool get isDeparted => status == 'departed';
   bool get isCurrent => status == 'at-station';
@@ -579,21 +665,20 @@ class TrainRouteStop {
 
   /// Which time to show — actual if available, else scheduled.
   DateTime? get effectiveArrival => actualArrival ?? scheduledArrival;
-  DateTime? get effectiveDeparture =>
-      actualDeparture ?? scheduledDeparture;
+  DateTime? get effectiveDeparture => actualDeparture ?? scheduledDeparture;
 
   // ── Helpers ───────────────────────────────────────────────────
-  /// Format a DateTime to "HH:mm" in IST.
+  static String? formatHm(DateTime? d) => _fmtTime(d);
+
+  /// Format a DateTime to 12-hour time in IST.
   static String? _fmtTime(DateTime? d) {
     if (d == null) return null;
     // Normalise to UTC then shift to IST (+5:30)
     final ist = d.toUtc().add(const Duration(hours: 5, minutes: 30));
-    return '${ist.hour.toString().padLeft(2, '0')}:'
-        '${ist.minute.toString().padLeft(2, '0')}';
+    final hour = ist.hour % 12 == 0 ? 12 : ist.hour % 12;
+    final period = ist.hour < 12 ? 'AM' : 'PM';
+    return '$hour:${ist.minute.toString().padLeft(2, '0')} $period';
   }
-
-  /// Same as `_fmtTime` but public — for callers who need it.
-  static String? formatHm(DateTime? d) => _fmtTime(d);
 
   static int _int(dynamic v, [int fallback = 0]) {
     if (v == null) return fallback;
@@ -609,7 +694,6 @@ class TrainRouteStop {
 
   static DateTime? _dt(dynamic v) {
     if (v == null) return null;
-    if (v is DateTime) return v;
     return DateTime.tryParse(v.toString());
   }
 }

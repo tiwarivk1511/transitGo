@@ -6,10 +6,10 @@ class StationTraffic {
   final DateTime? generatedAt;
 
   /// Live board window (RailRadar provides this).
-  final String? windowFrom;   // "07:54"
-  final String? windowTo;     // "15:54"
-  final int? hoursBack;       // 4
-  final int? serverCount;     // total count reported by API
+  final String? windowFrom; // "07:54"
+  final String? windowTo; // "15:54"
+  final int? hoursBack; // 4
+  final int? serverCount; // total count reported by API
 
   StationTraffic({
     required this.stationCode,
@@ -38,12 +38,17 @@ class StationTraffic {
   // NTES PARSER (legacy)
   // ═══════════════════════════════════════════════════════════════════
   factory StationTraffic.fromNtes(
-      Map<String, dynamic> data, String code, int hours) {
-    final raw = (data['trainList'] ??
-        data['trains'] ??
-        data['movements'] ??
-        data['data'] ??
-        []) as List?;
+    Map<String, dynamic> data,
+    String code,
+    int hours,
+  ) {
+    final raw =
+        (data['trainList'] ??
+                data['trains'] ??
+                data['movements'] ??
+                data['data'] ??
+                [])
+            as List?;
 
     final list = <TrainMovement>[];
     if (raw != null) {
@@ -60,8 +65,7 @@ class StationTraffic {
           .toString(),
       hoursAhead: _int(pick(data, ['hours', 'hoursAhead'])) ?? hours,
       movements: list,
-      generatedAt:
-      _dt(pick(data, ['generatedAt', 'updatedAt', 'timestamp'])),
+      generatedAt: _dt(pick(data, ['generatedAt', 'updatedAt', 'timestamp'])),
       serverCount: _intOrNull(pick(data, ['count'])),
     );
   }
@@ -71,24 +75,29 @@ class StationTraffic {
   // Handles both /stations/{code}/live and /stations/{code}/trains
   // ═══════════════════════════════════════════════════════════════════
   factory StationTraffic.fromRailRadar(
-      Map<String, dynamic> data, String code, int hours) {
+    Map<String, dynamic> data,
+    String code,
+    int hours,
+  ) {
     final stationMap = data['station'] is Map
         ? Map<String, dynamic>.from(data['station'] as Map)
         : (data['stationInfo'] is Map
-        ? Map<String, dynamic>.from(data['stationInfo'] as Map)
-        : const <String, dynamic>{});
+              ? Map<String, dynamic>.from(data['stationInfo'] as Map)
+              : const <String, dynamic>{});
 
     final windowMap = data['window'] is Map
         ? Map<String, dynamic>.from(data['window'] as Map)
         : const <String, dynamic>{};
 
-    final raw = (data['trains'] ??
-        data['trainList'] ??
-        data['movements'] ??
-        data['departures'] ??
-        data['arrivals'] ??
-        data['data'] ??
-        []) as List?;
+    final raw =
+        (data['trains'] ??
+                data['trainList'] ??
+                data['movements'] ??
+                data['departures'] ??
+                data['arrivals'] ??
+                data['data'] ??
+                [])
+            as List?;
 
     final list = <TrainMovement>[];
     if (raw != null) {
@@ -100,25 +109,23 @@ class StationTraffic {
 
     return StationTraffic(
       stationCode:
-      (pick(stationMap, ['code', 'stationCode', 'stnCode']) ??
-          pick(data, ['stationCode', 'code']) ??
-          code)
-          .toString(),
+          (pick(stationMap, ['code', 'stationCode', 'stnCode']) ??
+                  pick(data, ['stationCode', 'code']) ??
+                  code)
+              .toString(),
       stationName:
-      (pick(stationMap, ['name', 'stationName', 'stnName']) ??
-          pick(data, ['stationName', 'name']) ??
-          code)
-          .toString(),
-      hoursAhead: _int(pick(windowMap, ['hoursAhead'])) ??
+          (pick(stationMap, ['name', 'stationName', 'stnName']) ??
+                  pick(data, ['stationName', 'name']) ??
+                  code)
+              .toString(),
+      hoursAhead:
+          _int(pick(windowMap, ['hoursAhead'])) ??
           _int(pick(data, ['hours', 'hoursAhead'])) ??
           hours,
       movements: list,
-      generatedAt: _dt(pick(data, [
-        'generatedAt',
-        'updatedAt',
-        'timestamp',
-        'lastUpdated',
-      ])),
+      generatedAt: _dt(
+        pick(data, ['generatedAt', 'updatedAt', 'timestamp', 'lastUpdated']),
+      ),
       windowFrom: windowMap['from']?.toString(),
       windowTo: windowMap['to']?.toString(),
       hoursBack: _intOrNull(windowMap['hoursBack']),
@@ -128,7 +135,10 @@ class StationTraffic {
 
   /// Auto-detect.
   factory StationTraffic.parse(
-      Map<String, dynamic> data, String code, int hours) {
+    Map<String, dynamic> data,
+    String code,
+    int hours,
+  ) {
     if (data['station'] is Map ||
         data['stationInfo'] is Map ||
         data['window'] is Map ||
@@ -160,9 +170,8 @@ class StationTraffic {
       movements.where((m) => m.delayMinutes <= 0).toList();
 
   /// Live arrivals (from the server's perspective) — trains arriving.
-  List<TrainMovement> get arrivals => movements
-      .where((m) => m.arrival != null && m.arrival != '--')
-      .toList();
+  List<TrainMovement> get arrivals =>
+      movements.where((m) => m.arrival != null && m.arrival != '--').toList();
 
   /// Live departures — trains departing.
   List<TrainMovement> get departures => movements
@@ -189,14 +198,14 @@ class TrainMovement {
   final String? platform;
   final int delayMinutes;
   final String? trainType;
-  final String? status;          // "at-station" | "running" | "upcoming"
-  final String? expectedArrival;  // ISO or HH:mm
+  final String? status; // "at-station" | "running" | "upcoming"
+  final String? expectedArrival; // ISO or HH:mm
   final String? expectedDeparture;
   final int? day;
 
   // ── NEW fields from RailRadar's /trains + /live ─────────────────
-  final List<String> runDays;    // ['mon','tue',...]
-  final String? stopType;        // "origin" | "destination" | "intermediate"
+  final List<String> runDays; // ['mon','tue',...]
+  final String? stopType; // "origin" | "destination" | "intermediate"
   final int? sequence;
   final double? distance;
   final int? arrivalDay;
@@ -253,30 +262,30 @@ class TrainMovement {
     final stopMap = json['stop'] is Map
         ? Map<String, dynamic>.from(json['stop'] as Map)
         : (json['schedule'] is Map
-        ? Map<String, dynamic>.from(json['schedule'] as Map)
-        : (json['timing'] is Map
-        ? Map<String, dynamic>.from(json['timing'] as Map)
-        : const <String, dynamic>{}));
+              ? Map<String, dynamic>.from(json['schedule'] as Map)
+              : (json['timing'] is Map
+                    ? Map<String, dynamic>.from(json['timing'] as Map)
+                    : const <String, dynamic>{}));
 
     final liveMap = json['live'] is Map
         ? Map<String, dynamic>.from(json['live'] as Map)
         : (json['realtime'] is Map
-        ? Map<String, dynamic>.from(json['realtime'] as Map)
-        : (json['realTime'] is Map
-        ? Map<String, dynamic>.from(json['realTime'] as Map)
-        : const <String, dynamic>{}));
+              ? Map<String, dynamic>.from(json['realtime'] as Map)
+              : (json['realTime'] is Map
+                    ? Map<String, dynamic>.from(json['realTime'] as Map)
+                    : const <String, dynamic>{}));
 
     final srcMap = json['source'] is Map
         ? Map<String, dynamic>.from(json['source'] as Map)
         : (trainMap['source'] is Map
-        ? Map<String, dynamic>.from(trainMap['source'] as Map)
-        : const <String, dynamic>{});
+              ? Map<String, dynamic>.from(trainMap['source'] as Map)
+              : const <String, dynamic>{});
 
     final dstMap = json['destination'] is Map
         ? Map<String, dynamic>.from(json['destination'] as Map)
         : (trainMap['destination'] is Map
-        ? Map<String, dynamic>.from(trainMap['destination'] as Map)
-        : const <String, dynamic>{});
+              ? Map<String, dynamic>.from(trainMap['destination'] as Map)
+              : const <String, dynamic>{});
 
     dynamic find(List<String> keys) {
       for (final layer in [json, trainMap, stopMap, liveMap]) {
@@ -287,63 +296,59 @@ class TrainMovement {
     }
 
     // ── Train number / name ───────────────────────────────────────
-    final number = (find([
-      'trainNumber',
-      'number',
-      'trainNo',
-      'train_no',
-      'no',
-      'trainNumberCode',
-    ]) ??
-        '')
-        .toString();
+    final number =
+        (find([
+                  'trainNumber',
+                  'number',
+                  'trainNo',
+                  'train_no',
+                  'no',
+                  'trainNumberCode',
+                ]) ??
+                '')
+            .toString();
 
-    final name = (find([
-      'trainName',
-      'name',
-      'train_name',
-      'trainFullName',
-    ]) ??
-        '')
-        .toString();
+    final name =
+        (find(['trainName', 'name', 'train_name', 'trainFullName']) ?? '')
+            .toString();
 
     // ── Source / destination ──────────────────────────────────────
     String src;
     if (srcMap.isNotEmpty) {
-      src = (StationTraffic.pick(srcMap, ['name', 'stationName', 'code']) ??
-          '')
+      src = (StationTraffic.pick(srcMap, ['name', 'stationName', 'code']) ?? '')
           .toString();
     } else {
-      src = (find([
-        'source',
-        'from',
-        'fromStation',
-        'fromStationName',
-        'sourceStation',
-        'sourceName',
-        'origin',
-      ]) ??
-          '')
-          .toString();
+      src =
+          (find([
+                    'source',
+                    'from',
+                    'fromStation',
+                    'fromStationName',
+                    'sourceStation',
+                    'sourceName',
+                    'origin',
+                  ]) ??
+                  '')
+              .toString();
     }
 
     String dst;
     if (dstMap.isNotEmpty) {
-      dst = (StationTraffic.pick(dstMap, ['name', 'stationName', 'code']) ??
-          '')
+      dst = (StationTraffic.pick(dstMap, ['name', 'stationName', 'code']) ?? '')
           .toString();
     } else {
-      dst = (find([
-        'destination',
-        'to',
-        'toStation',
-        'toStationName',
-        'destinationStation',
-        'destinationName',
-        'dest',
-      ]) ??
-          '')
-          .toString();
+      dst =
+          (find([
+                    'destination',
+                    'to',
+                    'toStation',
+                    'toStationName',
+                    'destinationStation',
+                    'destinationName',
+                    'dest',
+                  ]) ??
+                  '')
+              .toString();
     }
 
     // ── Arrival / departure (can be null for origin/destination) ──
@@ -367,17 +372,17 @@ class TrainMovement {
     ]);
 
     // ── Platform ──────────────────────────────────────────────────
-    final pf = find(['platform', 'pf', 'platformNumber', 'platformNo'])
-        ?.toString();
+    final pf = find([
+      'platform',
+      'pf',
+      'platformNumber',
+      'platformNo',
+    ])?.toString();
 
     // ── Delay ────────────────────────────────────────────────────
-    final delay = _int(find([
-      'delayMinutes',
-      'delay',
-      'delayMin',
-      'lateBy',
-      'late',
-    ]));
+    final delay = _int(
+      find(['delayMinutes', 'delay', 'delayMin', 'lateBy', 'late']),
+    );
 
     // ── Run days ─────────────────────────────────────────────────
     final rawDays = trainMap['runDays'];
@@ -386,7 +391,8 @@ class TrainMovement {
         : <String>[];
 
     // ── Live type ────────────────────────────────────────────────
-    final liveStatus = liveMap['type']?.toString() ??
+    final liveStatus =
+        liveMap['type']?.toString() ??
         find(['status', 'runningStatus'])?.toString();
 
     // ── Expected times (parse out HH:mm from ISO) ─────────────────
@@ -402,7 +408,8 @@ class TrainMovement {
       departure: _hm(depRaw),
       platform: pf,
       delayMinutes: delay,
-      trainType: trainMap['type']?.toString() ??
+      trainType:
+          trainMap['type']?.toString() ??
           find(['trainType', 'type'])?.toString(),
       status: liveStatus,
       expectedArrival: expArr,
@@ -417,11 +424,18 @@ class TrainMovement {
     );
   }
 
-  /// Extract HH:mm from ISO-8601 or "HH:mm:ss" strings.
+  /// Extract HH:mm from ISO-8601 or "HH:mm:ss" strings, normalizing
+  /// timestamps to IST before returning the time.
   static String? _extractHm(dynamic raw) {
     if (raw == null) return null;
     final s = raw.toString();
     if (s.isEmpty) return null;
+    final timestamp = DateTime.tryParse(s);
+    if (timestamp != null && s.contains('T')) {
+      final ist = timestamp.toUtc().add(const Duration(hours: 5, minutes: 30));
+      return '${ist.hour.toString().padLeft(2, '0')}:'
+          '${ist.minute.toString().padLeft(2, '0')}';
+    }
     final m = RegExp(r'(\d{1,2}):(\d{2})').firstMatch(s);
     if (m == null) return null;
     return '${m.group(1)!.padLeft(2, '0')}:${m.group(2)}';
@@ -433,11 +447,7 @@ class TrainMovement {
     if (raw == null) return null;
     final s = raw.toString();
     if (s.isEmpty || s == '--') return null;
-    final m = RegExp(r'(\d{1,2}):(\d{2})').firstMatch(s);
-    if (m != null) {
-      return '${m.group(1)!.padLeft(2, '0')}:${m.group(2)}';
-    }
-    return s;
+    return _extractHm(raw) ?? s;
   }
 
   bool get isDelayed => delayMinutes > 0;

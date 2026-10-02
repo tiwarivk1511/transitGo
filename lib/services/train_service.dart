@@ -9,35 +9,59 @@ class TrainService {
   // LIVE TRACKING (one-shot)
   // ═══════════════════════════════════════════════════════════════════
   static Future<TrainTracking?> liveTracking(String trainNumber) async {
-    final cacheKey = 'live_$trainNumber';
-    final d = await NtesSource.liveTracking(trainNumber);
+    final cleanNo = trainNumber.trim().split(' - ').first;
+    final cacheKey = 'live_$cleanNo';
 
-    if (d == null || (d is Map && d['__html__'] is String)) {
-      final cached = await OfflineCache.get(cacheKey);
-      if (cached is Map) {
-        return TrainTracking.parse(
-            Map<String, dynamic>.from(cached), trainNumber);
+    dynamic d = await NtesSource.liveTracking(cleanNo);
+    Map<String, dynamic>? rawMap;
+
+    if (d is Map && (d['__html__'] is! String)) {
+      rawMap = Map<String, dynamic>.from(d);
+    } else {
+      final liveData = await RailRadarSource.liveTracking(
+        cleanNo,
+        includeGeometry: true,
+      );
+      if (liveData is Map) {
+        rawMap = Map<String, dynamic>.from(liveData!);
       }
-      return null;
     }
 
-    try {
-      await OfflineCache.put(cacheKey, d,
-          ttl: const Duration(minutes: 10));
-    } catch (_) {}
+    if (rawMap != null &&
+        (rawMap['geometry'] == null || rawMap['geometry'] is! Map)) {
+      final routeGeo = await RailRadarSource.trainRouteGeometry(cleanNo);
+      if (routeGeo != null) {
+        rawMap['geometry'] = routeGeo;
+      }
+    }
 
-    return TrainTracking.parse(
-        Map<String, dynamic>.from(d), trainNumber);
+    if (rawMap != null) {
+      try {
+        await OfflineCache.put(
+          cacheKey,
+          rawMap,
+          ttl: const Duration(minutes: 10),
+        );
+      } catch (_) {}
+
+      return TrainTracking.parse(rawMap, cleanNo);
+    }
+
+    final cached = await OfflineCache.get(cacheKey);
+    if (cached is Map) {
+      return TrainTracking.parse(Map<String, dynamic>.from(cached), cleanNo);
+    }
+    return null;
   }
 
   // ═══════════════════════════════════════════════════════════════════
   // LIVE TRACKING STREAM (WebSocket-shaped)
   // ═══════════════════════════════════════════════════════════════════
   static Stream<TrainTracking> stream(
-      String trainNumber, {
-        Duration interval = const Duration(seconds: 30),
-        bool includeGeometry = false,
-      }) {
+    String trainNumber, {
+    Duration interval = const Duration(seconds: 30),
+    bool includeGeometry = true,
+  }) {
     return LiveStreamSource.liveTrain(
       trainNumber,
       interval: interval,
@@ -49,8 +73,11 @@ class TrainService {
   // TRAINS BETWEEN STATIONS
   // ═══════════════════════════════════════════════════════════════════
   static Future<Map<String, dynamic>?> trainsBetween(
-      String from, String to, String date) async {
-    final cacheKey = 'btwn_${from}_${to}_$date';
+    String from,
+    String to, [
+    String? date,
+  ]) async {
+    final cacheKey = 'btwn_${from}_${to}_${date ?? 'all'}';
     final d = await NtesSource.trainsBetween(from, to, date);
 
     dynamic src = d;
@@ -64,10 +91,9 @@ class TrainService {
 
     final map = Map<String, dynamic>.from(src);
 
-    final raw = (map['trains'] ??
-        map['trainBtwnStnsList'] ??
-        map['trainList'] ??
-        []) as List?;
+    final raw =
+        (map['trains'] ?? map['trainBtwnStnsList'] ?? map['trainList'] ?? [])
+            as List?;
 
     // ── Empty is a VALID result — never return null for it ─────
     final rawList = raw ?? const <dynamic>[];
@@ -84,8 +110,7 @@ class TrainService {
       if (item is! Map) continue;
       final m = Map<String, dynamic>.from(item);
 
-      final hasNested =
-          m['train'] is Map || m['from'] is Map || m['to'] is Map;
+      final hasNested = m['train'] is Map || m['from'] is Map || m['to'] is Map;
 
       if (hasNested) {
         final trainMap = m['train'] is Map
@@ -149,19 +174,18 @@ class TrainService {
       }
     }
 
-    final result = {
+    final result = <String, dynamic>{
       'fromStation': topFrom['name']?.toString() ?? from,
       'toStation': topTo['name']?.toString() ?? to,
-      'journeyDate': date,
       'trains': trains,
       'count': trains.length,
     };
+    if (date != null) result['journeyDate'] = date;
 
     // Cache ONLY network successes (including empty), 6h TTL
-    if (d != null && !(d is Map && d['__html__'] is String)) {
+    if (d is Map && ((d as Map)['__html__'] as String?) == null) {
       try {
-        await OfflineCache.put(cacheKey, result,
-            ttl: const Duration(hours: 6));
+        await OfflineCache.put(cacheKey, result, ttl: const Duration(hours: 6));
       } catch (_) {}
     }
 

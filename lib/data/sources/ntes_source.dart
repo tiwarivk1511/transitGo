@@ -69,18 +69,31 @@ class NtesSource {
     return int.tryParse(v.toString()) ?? fb;
   }
 
+  static int _fareAmount(dynamic v, [int fallback = 0]) {
+    if (v == null) return fallback;
+    if (v is num) return v.round();
+    final normalized = v.toString().replaceAll(RegExp(r'[^\d.-]'), '');
+    return num.tryParse(normalized)?.round() ?? fallback;
+  }
+
   // ═══════════════════════════════════════════════════════════════════
   // MNTES CALL — with circuit breaker + rate limit + normalize
   // ═══════════════════════════════════════════════════════════════════
   static Future<dynamic> _mntes(
-      String cat, String sub, Map<String, String> q) async {
+    String cat,
+    String sub,
+    Map<String, String> q,
+  ) async {
     if (MntesClient.isBlocked) {
       debugPrint('[MNTES] circuit OPEN — skip $cat/$sub');
       return null;
     }
     try {
-      final res = await MntesClient.post(cat, sub, query: q)
-          .timeout(_mntesTimeout);
+      final res = await MntesClient.post(
+        cat,
+        sub,
+        query: q,
+      ).timeout(_mntesTimeout);
       if (res == null) {
         debugPrint('[MNTES] null response $cat/$sub');
         return null;
@@ -97,8 +110,7 @@ class NtesSource {
 
   /// RailRadar ko call karke router ko status batao.
   /// Returns null jab router allow na kare ya call fail ho.
-  static Future<T?> _tryRailRadar<T>(
-      Future<T?> Function() call) async {
+  static Future<T?> _tryRailRadar<T>(Future<T?> Function() call) async {
     if (!ApiRouter.useRailRadar) return null;
 
     RailRadarSource.clearError();
@@ -116,14 +128,14 @@ class NtesSource {
   // ═══════════════════════════════════════════════════════════════════
   // 1. LIVE TRAIN RUNNING STATUS
   // ═══════════════════════════════════════════════════════════════════
-  static Future<Map<String, dynamic>?> liveTracking(
-      String trainNumber) async {
+  static Future<Map<String, dynamic>?> liveTracking(String trainNumber) async {
     final n = trainNumber.trim();
     if (n.isEmpty) return null;
 
     // ── 1) RailRadar ─────────────────────────────────────────────
     final rr = await _tryRailRadar(
-            () => RailRadarSource.liveTracking(n, includeGeometry: true));
+      () => RailRadarSource.liveTracking(n, includeGeometry: true),
+    );
     if (rr != null) return rr;
 
     // ── 2) MNTES scrape ──────────────────────────────────────────
@@ -142,24 +154,26 @@ class NtesSource {
     final m = Map<String, dynamic>.from(raw);
 
     // Train name / number
-    final trainName = _str(_pick(m, [
-      'train_name', 'trainName', 'trainNameEn',
-    ]));
+    final trainName = _str(
+      _pick(m, ['train_name', 'trainName', 'trainNameEn']),
+    );
 
     // Current station
-    final currentCode = _str(_pick(m, [
-      'current_station_code', 'curStn', 'currentStationCode',
-      'cur_stn_code',
-    ]));
+    final currentCode = _str(
+      _pick(m, [
+        'current_station_code',
+        'curStn',
+        'currentStationCode',
+        'cur_stn_code',
+      ]),
+    );
 
-    final currentName = _str(_pick(m, [
-      'current_station_name', 'curStnName', 'currentStationName',
-    ]));
+    final currentName = _str(
+      _pick(m, ['current_station_name', 'curStnName', 'currentStationName']),
+    );
 
     // Route / stations
-    final rawRoute = _pick(m, [
-      'stations', 'stationList', 'route', 'stnList',
-    ]);
+    final rawRoute = _pick(m, ['stations', 'stationList', 'route', 'stnList']);
     final route = <Map<String, dynamic>>[];
 
     if (rawRoute is List) {
@@ -170,40 +184,30 @@ class NtesSource {
 
         route.add({
           'seq': i + 1,
-          'stationCode': _str(_pick(s, [
-            'stnCode', 'stationCode', 'code', 'stn_code',
-          ])),
-          'stationName': _str(_pick(s, [
-            'stnName', 'stationName', 'name', 'stn_name',
-          ])),
-          'arrivalTime': _str(_pick(s, [
-            'sta', 'arrivalTime', 'arrival', 'schArrival',
-          ])),
-          'departureTime': _str(_pick(s, [
-            'std', 'departureTime', 'departure', 'schDeparture',
-          ])),
-          'distance': _int(_pick(s, [
-            'distance', 'dist', 'km',
-          ])),
-          'dayCount': _int(_pick(s, [
-            'dayCount', 'day', 'dayNo',
-          ]), 1),
+          'stationCode': _str(
+            _pick(s, ['stnCode', 'stationCode', 'code', 'stn_code']),
+          ),
+          'stationName': _str(
+            _pick(s, ['stnName', 'stationName', 'name', 'stn_name']),
+          ),
+          'arrivalTime': _str(
+            _pick(s, ['sta', 'arrivalTime', 'arrival', 'schArrival']),
+          ),
+          'departureTime': _str(
+            _pick(s, ['std', 'departureTime', 'departure', 'schDeparture']),
+          ),
+          'distance': _int(_pick(s, ['distance', 'dist', 'km'])),
+          'dayCount': _int(_pick(s, ['dayCount', 'day', 'dayNo']), 1),
           'platform': _str(_pick(s, ['platform', 'pf', 'platformNo'])),
           'halt': true,
-          'delay': _int(_pick(s, [
-            'delayArrival', 'delay', 'delayMin',
-          ])),
+          'delay': _int(_pick(s, ['delayArrival', 'delay', 'delayMin'])),
         });
       }
     }
 
     // Delay / speed
-    final delay = _int(_pick(m, [
-      'delay', 'delayMinutes', 'lateBy', 'late',
-    ]));
-    final speed = _int(_pick(m, [
-      'speed', 'avgSpeed', 'speedKmh',
-    ]));
+    final delay = _int(_pick(m, ['delay', 'delayMinutes', 'lateBy', 'late']));
+    final speed = _int(_pick(m, ['speed', 'avgSpeed', 'speedKmh']));
 
     return {
       'trainNumber': number,
@@ -224,23 +228,25 @@ class NtesSource {
   // 2. TRAINS BETWEEN STATIONS
   // ═══════════════════════════════════════════════════════════════════
   static Future<Map<String, dynamic>?> trainsBetween(
-      String from, String to, String date) async {
+    String from,
+    String to, [
+    String? date,
+  ]) async {
     final f = from.trim().toUpperCase();
     final t = to.trim().toUpperCase();
     if (f.isEmpty || t.isEmpty) return null;
 
     // ── 1) RailRadar ─────────────────────────────────────────────
     final rr = await _tryRailRadar(
-            () => RailRadarSource.trainsBetween(f, t, date: date));
+      () => RailRadarSource.trainsBetween(f, t, date: date),
+    );
     final rrMap = _asMap(rr);
     if (rrMap != null) return rrMap;
 
     // ── 2) MNTES scrape ──────────────────────────────────────────
-    final raw = await _mntes('TrainRunning', 'TrainBetweenStations', {
-      'fromStation': f,
-      'toStation': t,
-      'jDate': date,
-    });
+    final query = <String, String>{'fromStation': f, 'toStation': t};
+    if (date != null && date.isNotEmpty) query['jDate'] = date;
+    final raw = await _mntes('TrainRunning', 'TrainBetweenStations', query);
     if (!_isRealPayload(raw)) return null;
 
     return _normalizeBetween(raw as Map, f, t, date);
@@ -249,11 +255,18 @@ class NtesSource {
   /// MNTES TrainBetweenStations → shape jo TrainService.trainsBetween
   /// already samajhta hai.
   static Map<String, dynamic> _normalizeBetween(
-      Map raw, String from, String to, String date) {
+    Map raw,
+    String from,
+    String to,
+    String? date,
+  ) {
     final m = Map<String, dynamic>.from(raw);
 
     final rawList = _pick(m, [
-      'trains', 'trainBtwnStnsList', 'trainList', 'trainBtwnStns',
+      'trains',
+      'trainBtwnStnsList',
+      'trainList',
+      'trainBtwnStns',
     ]);
     final trains = <Map<String, dynamic>>[];
 
@@ -263,54 +276,57 @@ class NtesSource {
         final x = Map<String, dynamic>.from(item);
 
         trains.add({
-          'trainNumber': _str(_pick(x, [
-            'train_no', 'trainNumber', 'trainNo', 'number',
-          ])),
-          'trainName': _str(_pick(x, [
-            'train_name', 'trainName', 'name',
-          ])),
-          'trainType': _str(_pick(x, [
-            'train_type', 'trainType', 'type',
-          ])),
-          'fromStnCode': _str(_pick(x, [
-            'from_stn_code', 'fromStnCode', 'fromCode',
-          ]), from),
-          'fromStnName': _str(_pick(x, [
-            'from_stn_name', 'fromStnName', 'fromName',
-          ]), from),
-          'departureTime': _str(_pick(x, [
-            'from_time', 'departureTime', 'depTime', 'std',
-          ]), '--'),
+          'trainNumber': _str(
+            _pick(x, ['train_no', 'trainNumber', 'trainNo', 'number']),
+          ),
+          'trainName': _str(_pick(x, ['train_name', 'trainName', 'name'])),
+          'trainType': _str(_pick(x, ['train_type', 'trainType', 'type'])),
+          'fromStnCode': _str(
+            _pick(x, ['from_stn_code', 'fromStnCode', 'fromCode']),
+            from,
+          ),
+          'fromStnName': _str(
+            _pick(x, ['from_stn_name', 'fromStnName', 'fromName']),
+            from,
+          ),
+          'departureTime': _str(
+            _pick(x, ['from_time', 'departureTime', 'depTime', 'std']),
+            '--',
+          ),
           'fromDay': _int(_pick(x, ['from_day', 'fromDay']), 1),
-          'toStnCode': _str(_pick(x, [
-            'to_stn_code', 'toStnCode', 'toCode',
-          ]), to),
-          'toStnName': _str(_pick(x, [
-            'to_stn_name', 'toStnName', 'toName',
-          ]), to),
-          'arrivalTime': _str(_pick(x, [
-            'to_time', 'arrivalTime', 'arrTime', 'sta',
-          ]), '--'),
+          'toStnCode': _str(
+            _pick(x, ['to_stn_code', 'toStnCode', 'toCode']),
+            to,
+          ),
+          'toStnName': _str(
+            _pick(x, ['to_stn_name', 'toStnName', 'toName']),
+            to,
+          ),
+          'arrivalTime': _str(
+            _pick(x, ['to_time', 'arrivalTime', 'arrTime', 'sta']),
+            '--',
+          ),
           'toDay': _int(_pick(x, ['to_day', 'toDay']), 1),
           'distance': _int(_pick(x, ['distance', 'dist'])),
-          'duration': _int(_pick(x, [
-            'travel_time', 'duration', 'durationMin',
-          ])),
-          'totalHaltsBetween': _int(_pick(x, [
-            'total_halts', 'halts', 'totalHaltsBetween',
-          ])),
+          'duration': _int(
+            _pick(x, ['travel_time', 'duration', 'durationMin']),
+          ),
+          'totalHaltsBetween': _int(
+            _pick(x, ['total_halts', 'halts', 'totalHaltsBetween']),
+          ),
         });
       }
     }
 
-    return {
+    final result = <String, dynamic>{
       'from': {'code': from, 'name': from},
       'to': {'code': to, 'name': to},
-      'journeyDate': date,
       'trains': trains,
       'count': trains.length,
       'source': 'mntes',
     };
+    if (date != null) result['journeyDate'] = date;
+    return result;
   }
 
   // ═══════════════════════════════════════════════════════════════════
@@ -323,9 +339,7 @@ class NtesSource {
     final rr = await _tryRailRadar(() => RailRadarSource.pnr(p));
     if (rr != null) return rr;
 
-    final raw = await _mntes('PNR', 'ShowPNRStatus', {
-      'pnrNumber': p,
-    });
+    final raw = await _mntes('PNR', 'ShowPNRStatus', {'pnrNumber': p});
     if (!_isRealPayload(raw)) return null;
 
     return _normalizePnr(raw as Map, p);
@@ -345,46 +359,45 @@ class NtesSource {
         final x = Map<String, dynamic>.from(item);
         passengers.add({
           'serialNumber': i + 1,
-          'bookingStatus': _str(_pick(x, [
-            'bookingStatus', 'booking', 'booking_status',
-          ])),
-          'currentStatus': _str(_pick(x, [
-            'currentStatus', 'current', 'current_status', 'status',
-          ])),
+          'bookingStatus': _str(
+            _pick(x, ['bookingStatus', 'booking', 'booking_status']),
+          ),
+          'currentStatus': _str(
+            _pick(x, ['currentStatus', 'current', 'current_status', 'status']),
+          ),
           'coach': _str(_pick(x, ['coach', 'coachNumber', 'coach_no'])),
-          'berth': _str(_pick(x, [
-            'berth', 'berthNo', 'berthNumber', 'berth_no',
-          ])),
-          'berthType': _str(_pick(x, [
-            'berthType', 'berthCode', 'berth_type',
-          ])),
+          'berth': _str(
+            _pick(x, ['berth', 'berthNo', 'berthNumber', 'berth_no']),
+          ),
+          'berthType': _str(_pick(x, ['berthType', 'berthCode', 'berth_type'])),
         });
       }
     }
 
     return {
       'pnrNumber': _str(_pick(m, ['pnrNumber', 'pnr', 'pnr_no']), pnr),
-      'trainNumber': _str(_pick(m, [
-        'trainNumber', 'train_no', 'trainNo',
-      ])),
-      'trainName': _str(_pick(m, [
-        'trainName', 'train_name',
-      ])),
-      'doj': _str(_pick(m, [
-        'doj', 'journeyDate', 'dateOfJourney', 'date_of_journey',
-      ])),
-      'boardingStation': _str(_pick(m, [
-        'boardingStation', 'from', 'boarding_station', 'fromStnCode',
-      ])),
-      'reservationUpto': _str(_pick(m, [
-        'reservationUpto', 'to', 'reservation_upto', 'toStnCode',
-      ])),
-      'journeyClass': _str(_pick(m, [
-        'journeyClass', 'class', 'classCode', 'journey_class',
-      ])),
-      'chartStatus': _str(_pick(m, [
-        'chartStatus', 'chart_status', 'chartingStatus',
-      ])),
+      'trainNumber': _str(_pick(m, ['trainNumber', 'train_no', 'trainNo'])),
+      'trainName': _str(_pick(m, ['trainName', 'train_name'])),
+      'doj': _str(
+        _pick(m, ['doj', 'journeyDate', 'dateOfJourney', 'date_of_journey']),
+      ),
+      'boardingStation': _str(
+        _pick(m, [
+          'boardingStation',
+          'from',
+          'boarding_station',
+          'fromStnCode',
+        ]),
+      ),
+      'reservationUpto': _str(
+        _pick(m, ['reservationUpto', 'to', 'reservation_upto', 'toStnCode']),
+      ),
+      'journeyClass': _str(
+        _pick(m, ['journeyClass', 'class', 'classCode', 'journey_class']),
+      ),
+      'chartStatus': _str(
+        _pick(m, ['chartStatus', 'chart_status', 'chartingStatus']),
+      ),
       'passengerStatus': passengers,
       'passengers': passengers,
       'source': 'mntes',
@@ -395,21 +408,21 @@ class NtesSource {
   // 4. COACH POSITION
   // ═══════════════════════════════════════════════════════════════════
   static Future<Map<String, dynamic>?> coachPosition(
-      String trainNumber, {
-        String? stationCode,
-      }) async {
+    String trainNumber, {
+    String? stationCode,
+  }) async {
     final n = trainNumber.trim();
     if (n.isEmpty) return null;
 
     // ── 1) RailRadar (station known) ─────────────────────────────
     if (stationCode != null && stationCode.trim().isNotEmpty) {
       final rr = await _tryRailRadar(
-              () => RailRadarSource.coachPosition(n, stationCode));
+        () => RailRadarSource.coachPosition(n, stationCode),
+      );
       if (rr != null) return rr;
     } else {
       // Derive source station from schedule (RailRadar only)
-      final sched = await _tryRailRadar(
-              () => RailRadarSource.trainSchedule(n));
+      final sched = await _tryRailRadar(() => RailRadarSource.trainSchedule(n));
       if (sched != null) {
         final route = sched['route'];
         if (route is List && route.isNotEmpty) {
@@ -418,7 +431,8 @@ class NtesSource {
             final code = first['stationCode']?.toString();
             if (code != null && code.isNotEmpty) {
               final rr = await _tryRailRadar(
-                      () => RailRadarSource.coachPosition(n, code));
+                () => RailRadarSource.coachPosition(n, code),
+              );
               if (rr != null) return rr;
             }
           }
@@ -427,20 +441,25 @@ class NtesSource {
     }
 
     // ── 2) MNTES ─────────────────────────────────────────────────
-    final raw = await _mntes('TrainRunning', 'CoachPosition', {
-      'trainNo': n,
-    });
+    final raw = await _mntes('TrainRunning', 'CoachPosition', {'trainNo': n});
     if (!_isRealPayload(raw)) return null;
 
     return _normalizeCoach(raw as Map, n, stationCode);
   }
 
   static Map<String, dynamic> _normalizeCoach(
-      Map raw, String number, String? station) {
+    Map raw,
+    String number,
+    String? station,
+  ) {
     final m = Map<String, dynamic>.from(raw);
 
     final rawList = _pick(m, [
-      'coachPositionList', 'coaches', 'coachList', 'composition', 'rake',
+      'coachPositionList',
+      'coaches',
+      'coachList',
+      'composition',
+      'rake',
     ]);
     final coaches = <Map<String, dynamic>>[];
 
@@ -451,27 +470,20 @@ class NtesSource {
           final x = Map<String, dynamic>.from(item);
           coaches.add({
             'position': _int(_pick(x, ['position', 'index', 'seq']), i + 1),
-            'code': _str(_pick(x, [
-              'code', 'coachCode', 'coach', 'number',
-            ])),
-            'class': _str(_pick(x, [
-              'class', 'classCode', 'category', 'type',
-            ])),
+            'code': _str(_pick(x, ['code', 'coachCode', 'coach', 'number'])),
+            'class': _str(_pick(x, ['class', 'classCode', 'category', 'type'])),
           });
         } else if (item is String && item.trim().isNotEmpty) {
-          coaches.add({
-            'position': i + 1,
-            'code': item.trim(),
-          });
+          coaches.add({'position': i + 1, 'code': item.trim()});
         }
       }
     }
 
     // Fallback: "ENG-B1-B2-A1-..." string
     if (coaches.isEmpty) {
-      final str = _str(_pick(m, [
-        'coachPosition', 'coach_position', 'rakeStr',
-      ]));
+      final str = _str(
+        _pick(m, ['coachPosition', 'coach_position', 'rakeStr']),
+      );
       if (str.isNotEmpty) {
         final parts = str.split('-');
         for (var i = 0; i < parts.length; i++) {
@@ -523,23 +535,39 @@ class NtesSource {
         ? Map<String, dynamic>.from(m['fare'] as Map)
         : m;
 
-    final total = _int(_pick(fareMap, [
-      'total', 'totalFare', 'amount', 'fare',
-    ]));
-    final base = _int(_pick(fareMap, [
-      'baseFare', 'base', 'basicFare',
-    ]), total);
+    final total = _fareAmount(
+      _pick(fareMap, ['total', 'totalFare', 'amount', 'fare']),
+    );
+    final base = _fareAmount(
+      _pick(fareMap, ['baseFare', 'base', 'basicFare']),
+      total,
+    );
+
+    final reservation = _pick(fareMap, [
+      'reservationCharge',
+      'reservation',
+      'resvCharge',
+    ]);
+    final superfast = _pick(fareMap, [
+      'superfastCharge',
+      'superFastCharge',
+      'superfast',
+    ]);
+    final catering = _pick(fareMap, ['cateringCharge', 'catering']);
+    final serviceTax = _pick(fareMap, ['serviceTax', 'gst', 'tax']);
+    final tatkal = _pick(fareMap, ['tatkalCharge', 'tatkalSurcharge']);
+    final other = _pick(fareMap, ['otherCharges', 'miscellaneousCharges']);
 
     return {
       'total': total,
       'totalFare': total,
       'baseFare': base,
-      'reservationCharge': _int(_pick(fareMap, ['reservationCharge'])),
-      'superfastCharge': _int(_pick(fareMap, ['superfastCharge'])),
-      'cateringCharge': _int(_pick(fareMap, ['cateringCharge'])),
-      'serviceTax': _int(_pick(fareMap, ['serviceTax', 'gst'])),
-      'tatkalCharge': _int(_pick(fareMap, ['tatkalCharge'])),
-      'otherCharges': _int(_pick(fareMap, ['otherCharges'])),
+      if (reservation != null) 'reservationCharge': _fareAmount(reservation),
+      if (superfast != null) 'superfastCharge': _fareAmount(superfast),
+      if (catering != null) 'cateringCharge': _fareAmount(catering),
+      if (serviceTax != null) 'serviceTax': _fareAmount(serviceTax),
+      if (tatkal != null) 'tatkalCharge': _fareAmount(tatkal),
+      if (other != null) 'otherCharges': _fareAmount(other),
       'quota': _str(_pick(m, ['quota'])),
       'source': 'mntes',
     };
@@ -549,12 +577,15 @@ class NtesSource {
   // 6. STATION LIVE TRAFFIC
   // ═══════════════════════════════════════════════════════════════════
   static Future<Map<String, dynamic>?> stationTraffic(
-      String stationCode, int hours) async {
+    String stationCode,
+    int hours,
+  ) async {
     final code = stationCode.trim().toUpperCase();
     if (code.isEmpty) return null;
 
     final rr = await _tryRailRadar(
-            () => RailRadarSource.stationLive(code, hours: _normalizeHours(hours)));
+      () => RailRadarSource.stationLive(code, hours: _normalizeHours(hours)),
+    );
     if (rr != null) return rr;
 
     final raw = await _mntes('Station', 'LiveStation', {
@@ -567,11 +598,19 @@ class NtesSource {
   }
 
   static Map<String, dynamic> _normalizeTraffic(
-      Map raw, String code, int hours) {
+    Map raw,
+    String code,
+    int hours,
+  ) {
     final m = Map<String, dynamic>.from(raw);
 
     final rawList = _pick(m, [
-      'trainList', 'trains', 'movements', 'data', 'departures', 'arrivals',
+      'trainList',
+      'trains',
+      'movements',
+      'data',
+      'departures',
+      'arrivals',
     ]);
     final trains = <Map<String, dynamic>>[];
 
@@ -580,28 +619,20 @@ class NtesSource {
         if (item is! Map) continue;
         final x = Map<String, dynamic>.from(item);
         trains.add({
-          'trainNumber': _str(_pick(x, [
-            'train_no', 'trainNumber', 'trainNo', 'number',
-          ])),
-          'trainName': _str(_pick(x, [
-            'train_name', 'trainName', 'name',
-          ])),
-          'source': _str(_pick(x, [
-            'source', 'from', 'fromStnName', 'src',
-          ])),
-          'destination': _str(_pick(x, [
-            'destination', 'to', 'toStnName', 'dest',
-          ])),
-          'arrival': _str(_pick(x, [
-            'arrival', 'arrivalTime', 'sta', 'eta',
-          ])),
-          'departure': _str(_pick(x, [
-            'departure', 'departureTime', 'std', 'etd',
-          ])),
+          'trainNumber': _str(
+            _pick(x, ['train_no', 'trainNumber', 'trainNo', 'number']),
+          ),
+          'trainName': _str(_pick(x, ['train_name', 'trainName', 'name'])),
+          'source': _str(_pick(x, ['source', 'from', 'fromStnName', 'src'])),
+          'destination': _str(
+            _pick(x, ['destination', 'to', 'toStnName', 'dest']),
+          ),
+          'arrival': _str(_pick(x, ['arrival', 'arrivalTime', 'sta', 'eta'])),
+          'departure': _str(
+            _pick(x, ['departure', 'departureTime', 'std', 'etd']),
+          ),
           'platform': _str(_pick(x, ['platform', 'pf'])),
-          'delayMinutes': _int(_pick(x, [
-            'delay', 'delayMinutes', 'lateBy',
-          ])),
+          'delayMinutes': _int(_pick(x, ['delay', 'delayMinutes', 'lateBy'])),
           'trainType': _str(_pick(x, ['trainType', 'type'])),
         });
       }
@@ -609,9 +640,7 @@ class NtesSource {
 
     return {
       'stationCode': code,
-      'stationName': _str(_pick(m, [
-        'stationName', 'stnName', 'name',
-      ]), code),
+      'stationName': _str(_pick(m, ['stationName', 'stnName', 'name']), code),
       'hours': hours,
       'hoursAhead': hours,
       'trainList': trains,
@@ -625,12 +654,12 @@ class NtesSource {
   // 7. STATION SCHEDULE
   // ═══════════════════════════════════════════════════════════════════
   static Future<Map<String, dynamic>?> stationSchedule(
-      String stationCode) async {
+    String stationCode,
+  ) async {
     final code = stationCode.trim().toUpperCase();
     if (code.isEmpty) return null;
 
-    final rr = await _tryRailRadar(
-            () => RailRadarSource.stationSchedule(code));
+    final rr = await _tryRailRadar(() => RailRadarSource.stationSchedule(code));
     if (rr != null) return rr;
 
     final raw = await _mntes('Station', 'StationSchedule', {
@@ -647,36 +676,38 @@ class NtesSource {
   // 8. LOOKUPS (RailRadar + Local / MNTES Fallbacks)
   // ═══════════════════════════════════════════════════════════════════
   static Future<List<Map<String, dynamic>>> searchTrains(
-      String query, {
-        int limit = 10,
-      }) async {
+    String query, {
+    int limit = 10,
+  }) async {
     final rr = await _tryRailRadar(
-            () => RailRadarSource.searchTrains(query, limit: limit));
+      () => RailRadarSource.searchTrains(query, limit: limit),
+    );
     if (rr != null && rr.isNotEmpty) return rr;
 
     // Fallback: search in OfflineCache recent/tracked trains
     try {
       final recent = await OfflineCache.getRecentTrains(limit: limit);
       final q = query.trim().toLowerCase();
-      return recent.where((t) {
-        final num = t['train_number']?.toString().toLowerCase() ?? '';
-        final name = t['train_name']?.toString().toLowerCase() ?? '';
-        return num.contains(q) || name.contains(q);
-      }).map((t) => {
-        'number': t['train_number'],
-        'name': t['train_name'],
-      }).toList();
+      return recent
+          .where((t) {
+            final num = t['train_number']?.toString().toLowerCase() ?? '';
+            final name = t['train_name']?.toString().toLowerCase() ?? '';
+            return num.contains(q) || name.contains(q);
+          })
+          .map((t) => {'number': t['train_number'], 'name': t['train_name']})
+          .toList();
     } catch (_) {
       return const [];
     }
   }
 
   static Future<List<Map<String, dynamic>>> searchStations(
-      String query, {
-        int limit = 10,
-      }) async {
+    String query, {
+    int limit = 10,
+  }) async {
     final rr = await _tryRailRadar(
-            () => RailRadarSource.searchStations(query, limit: limit));
+      () => RailRadarSource.searchStations(query, limit: limit),
+    );
     if (rr != null && rr.isNotEmpty) return rr;
 
     // Fallback: use local bundled StationSource (offline stations.json)
@@ -685,12 +716,16 @@ class NtesSource {
         await StationSource.load();
       }
       final stations = StationSource.search(query, limit: limit);
-      return stations.map((s) => {
-        'code': s.code,
-        'name': s.name,
-        'city': s.city ?? '',
-        'state': s.state ?? '',
-      }).toList();
+      return stations
+          .map(
+            (s) => {
+              'code': s.code,
+              'name': s.name,
+              'city': s.city ?? '',
+              'state': s.state ?? '',
+            },
+          )
+          .toList();
     } catch (_) {
       return const [];
     }
@@ -698,7 +733,8 @@ class NtesSource {
 
   static Future<Map<String, dynamic>?> trainSchedule(String trainNumber) async {
     final rr = await _tryRailRadar(
-            () => RailRadarSource.trainSchedule(trainNumber));
+      () => RailRadarSource.trainSchedule(trainNumber),
+    );
     if (rr != null && rr.isNotEmpty) return rr;
 
     // Fallback: fetch liveTracking which contains full route/schedule!

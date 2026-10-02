@@ -1,8 +1,16 @@
 import 'package:flutter/material.dart';
+
 import 'screens/splash/splash_screen.dart';
+import 'screens/startup_error_screen.dart';
 
 class TransitGoApp extends StatelessWidget {
-  const TransitGoApp({super.key});
+  /// Populated by `main()` when Firebase / Remote Config failed during
+  /// startup. When non-null the app skips the normal flow and shows a
+  /// blocking diagnostic screen instead of silently 401-ing on every
+  /// API call.
+  final String? startupError;
+
+  const TransitGoApp({super.key, this.startupError});
 
   @override
   Widget build(BuildContext context) {
@@ -19,7 +27,9 @@ class TransitGoApp extends StatelessWidget {
         ),
         fontFamily: 'Inter',
       ),
-      home: const SplashScreen(),
+      home: startupError == null
+          ? const SplashScreen()
+          : StartupErrorScreen(message: startupError!),
     );
   }
 }

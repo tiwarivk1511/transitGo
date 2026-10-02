@@ -2,10 +2,12 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:math';
 import 'package:flutter/foundation.dart';
+import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:http/http.dart' as http;
 
 class MntesClient {
-  static const String _base = 'https://enquiry.indianrail.gov.in/mntes';
+  static String get _base =>
+      dotenv.env['MNTES_BASE_URL'] ?? 'https://enquiry.indianrail.gov.in/mntes';
   static const Duration _timeout = Duration(seconds: 15);
 
   static final http.Client _http = http.Client();

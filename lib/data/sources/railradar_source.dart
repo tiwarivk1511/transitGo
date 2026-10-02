@@ -1,45 +1,65 @@
 import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/foundation.dart';
+import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:http/http.dart' as http;
 
 import 'api_router.dart';
+import '../../services/remote_config_service.dart';
 
 /// RailRadar API client — https://railradar.in/docs
 /// Envelope: { "success": true, "data": {...}, "meta": {...} }
 class RailRadarSource {
-  // static const String _apiKey = 'rg_7928ff69505e4205b53e5cec49fbf90a';
-  static const String _apiKey = 'rr_n1ex7lqp1pjdkin8rw3xfjta5w970q2q';
-  static const String _base = 'https://api.railradar.in/v1';
+  /// Only the base URL still comes from .env. The API key does NOT.
+  static String get _base =>
+      (dotenv.env['RAILRADAR_BASE_URL'] ?? 'https://api.railradar.in/v1')
+          .trim();
+
   static const Duration _timeout = Duration(seconds: 12);
 
-  static const Map<String, String> _headers = {
-    'Authorization': 'Bearer $_apiKey',
-    'Accept': 'application/json',
-  };
+  /// Toggle to `false` once auth is confirmed working.
+  static const bool _verboseAuth = true;
 
   // ═══════════════════════════════════════════════════════════════════
-  // DIAGNOSTICS — read from the most recent _get() call.
+  // AUTH
   //
-  // UI layers call these to build specific error messages:
-  //   429 → "Too many requests, wait a minute"
-  //   401/403 → "API key rejected"
-  //   5xx → "Server temporarily unavailable"
-  //   null → generic network error
+  // Key is now fetched asynchronously from Firebase Remote Config.
+  // A synchronous getter would return '' on cold start and cause 401s.
+  // ═══════════════════════════════════════════════════════════════════
+  static Future<String> _resolveKey() async {
+    try {
+      final k = await RemoteConfigService.ensureApiKey();
+      return _sanitize(k);
+    } catch (e) {
+      _debug('[RailRadar] key resolve failed: $e');
+      return '';
+    }
+  }
+
+  /// Strip an accidental "Bearer " prefix, surrounding quotes, or
+  /// trailing whitespace so we never send `Bearer Bearer …`.
+  static String _sanitize(String raw) {
+    var k = raw.trim();
+    if (k.toLowerCase().startsWith('bearer ')) {
+      k = k.substring(7).trim();
+    }
+    if (k.length >= 2 &&
+        ((k.startsWith('"') && k.endsWith('"')) ||
+            (k.startsWith("'") && k.endsWith("'")))) {
+      k = k.substring(1, k.length - 1);
+    }
+    return k;
+  }
+
+  // ═══════════════════════════════════════════════════════════════════
+  // DIAGNOSTICS
   // ═══════════════════════════════════════════════════════════════════
   static int? _lastStatus;
   static String? _lastError;
 
-  /// HTTP status code of the most recent request.
-  /// `null` when the request never produced a response (DNS failure,
-  /// socket error, timeout).
   static int? get lastStatusCode => _lastStatus;
-
-  /// Human-readable error message from the API, or a description of
-  /// the local failure (timeout, socket closed, JSON parse).
   static String? get lastErrorMessage => _lastError;
 
-  /// Forget the previous error (call before a fresh attempt).
   static void clearError() {
     _lastStatus = null;
     _lastError = null;
@@ -55,20 +75,46 @@ class RailRadarSource {
     _lastStatus = null;
     _lastError = null;
 
-    // Build URI, only pass query when it actually has entries
     final uri = Uri.parse('$_base$path').replace(
       queryParameters: (query == null || query.isEmpty) ? null : query,
     );
 
-    try {
-      final res =
-      await http.get(uri, headers: _headers).timeout(_timeout);
+    // ── AUTH PRE-FLIGHT (async — waits for Remote Config) ─────────
+    final key = await _resolveKey();
+    if (_verboseAuth) {
+      final masked = key.isEmpty
+          ? '<EMPTY>'
+          : '${key.substring(0, key.length < 10 ? key.length : 10)}…'
+          '(${key.length} chars)';
+      _debug('[RailRadar] → $uri');
+      _debug('[RailRadar]   base   = $_base');
+      _debug('[RailRadar]   auth   = Bearer $masked');
+      _debug('[RailRadar]   source = Firebase Remote Config');
+    }
 
+    if (key.isEmpty) {
+      _lastError =
+      'RailRadar API key not available yet. '
+          'Check Firebase Remote Config → "api_key".';
+      _debug('[RailRadar] ✗ aborted — empty key');
+      return null;
+    }
+    if (!key.startsWith('rr_')) {
+      _debug('[RailRadar] ⚠ key does not start with "rr_" — '
+          'RailRadar keys look like rr_live_… / rr_test_…');
+    }
+
+    final headers = {
+      'Authorization': 'Bearer $key',
+      'Accept': 'application/json',
+    };
+
+    try {
+      final res = await http.get(uri, headers: headers).timeout(_timeout);
       _lastStatus = res.statusCode;
 
-      // ── Status-specific handling ─────────────────────────────
+      // ── Credit tracking on 200 ────────────────────────────────
       if (res.statusCode == 200) {
-        // ── Credit tracking ─────────────────────────────────────────
         final remaining = int.tryParse(
             res.headers['x-credits-remaining'] ??
                 res.headers['x-ratelimit-remaining'] ??
@@ -83,9 +129,18 @@ class RailRadarSource {
         }
       }
 
+      // ── Status handling ───────────────────────────────────────
       if (res.statusCode == 401 || res.statusCode == 403) {
-        _lastError = 'API key rejected';
-        _debug('[RailRadar] auth failed ${res.statusCode} on $uri');
+        final wwwAuth = res.headers['www-authenticate'];
+        _lastError = wwwAuth != null
+            ? 'API key rejected ($wwwAuth)'
+            : 'API key rejected';
+        _debug('[RailRadar] ✗ auth failed ${res.statusCode} on $uri');
+        if (wwwAuth != null) {
+          _debug('[RailRadar]   www-authenticate: $wwwAuth');
+        }
+        _debug('[RailRadar]   sent auth header: '
+            'Bearer ${key.substring(0, key.length < 10 ? key.length : 10)}…');
         return null;
       }
       if (res.statusCode == 404) {
@@ -109,7 +164,7 @@ class RailRadarSource {
         return null;
       }
 
-      // ── Envelope parse ──────────────────────────────────────
+      // ── Envelope parse ────────────────────────────────────────
       dynamic body;
       try {
         body = json.decode(res.body);
@@ -133,7 +188,6 @@ class RailRadarSource {
         return null;
       }
 
-      // Success — clear error
       _lastError = null;
       return body['data'];
     } on TimeoutException {
@@ -195,9 +249,6 @@ class RailRadarSource {
 
   // ═══════════════════════════════════════════════════════════════════
   // 3. LIVE TRAIN RUNNING STATUS
-  //
-  // Single call — geometry is requested inline when needed, no retry.
-  // RailRadar returns the geometry block directly when `geometry=true`.
   // ═══════════════════════════════════════════════════════════════════
   static Future<Map<String, dynamic>?> liveTracking(
       String trainNumber, {
@@ -207,7 +258,7 @@ class RailRadarSource {
     if (n.isEmpty) return null;
 
     final data = await _get(
-      '/trains/$n/live',
+      '/trains/${n}/live',
       query: includeGeometry ? const {'geometry': 'true'} : null,
     );
     if (data is! Map) return null;
@@ -226,7 +277,7 @@ class RailRadarSource {
     final t = to.trim().toUpperCase();
     if (f.isEmpty || t.isEmpty) return null;
 
-    final data = await _get('/trains/between/$f/$t', query: {
+    final data = await _get('/trains/between/${f}/${t}', query: {
       if (date != null && date.isNotEmpty) 'date': date,
     });
     if (data is! Map) return null;
@@ -235,7 +286,6 @@ class RailRadarSource {
 
   // ═══════════════════════════════════════════════════════════════════
   // 5. STATION LIVE BOARD
-  //    hours must be one of 2 / 4 / 6 / 8.
   // ═══════════════════════════════════════════════════════════════════
   static Future<Map<String, dynamic>?> stationLive(
       String stationCode, {
@@ -269,25 +319,47 @@ class RailRadarSource {
   }
 
   // ═══════════════════════════════════════════════════════════════════
-  // 8. COACH POSITION
+  // 8. COACH POSITION / FORMATION & COACHES
   // ═══════════════════════════════════════════════════════════════════
   static Future<Map<String, dynamic>?> coachPosition(
-      String trainNumber,
-      String stationCode,
-      ) async {
-    final data =
-    await _get('/trains/$trainNumber/coaches/$stationCode');
+      String trainNumber, [
+        String? stationCode,
+      ]) async {
+    final path = (stationCode != null && stationCode.trim().isNotEmpty)
+        ? '/trains/$trainNumber/coaches/${stationCode.trim().toUpperCase()}'
+        : '/trains/$trainNumber/coaches';
+    final data = await _get(path);
     if (data is! Map) return null;
     return Map<String, dynamic>.from(data);
   }
 
+  static Future<Map<String, dynamic>?> trainCoaches(
+      String trainNumber,
+      ) async {
+    return coachPosition(trainNumber);
+  }
+
   // ═══════════════════════════════════════════════════════════════════
-  // 9. TRAIN SCHEDULE
+  // 9. TRAIN SCHEDULE & ROUTE GEOMETRY
   // ═══════════════════════════════════════════════════════════════════
   static Future<Map<String, dynamic>?> trainSchedule(
       String trainNumber,
       ) async {
     final data = await _get('/trains/$trainNumber');
+    if (data is! Map) return null;
+    return Map<String, dynamic>.from(data);
+  }
+
+  static Future<Map<String, dynamic>?> trainRouteGeometry(
+      String trainNumber,
+      ) async {
+    final n = trainNumber.trim();
+    if (n.isEmpty) return null;
+
+    final data = await _get(
+      '/trains/$n/route',
+      query: const {'format': 'geojson', 'stops': 'false'},
+    );
     if (data is! Map) return null;
     return Map<String, dynamic>.from(data);
   }

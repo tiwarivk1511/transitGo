@@ -1,10 +1,13 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:intl/intl.dart';
 
 import '../../../components/common/error_box.dart';
+import '../../../components/common/feature_intro.dart';
 import '../../../components/common/loading_indicator.dart';
 import '../../../components/station/station_autocomplete.dart';
+import '../../../core/cache/offline_cache.dart';
 import '../../../data/models/station.dart';
 import '../../../data/models/station_traffic.dart';
 import '../../../services/live_traffic_service.dart';
@@ -13,7 +16,9 @@ import '../../train_details/train_details_screen.dart';
 enum _Filter { all, onTime, delayed }
 
 class LiveTrafficScreen extends StatefulWidget {
-  const LiveTrafficScreen({super.key});
+  final String? initialStationCode;
+
+  const LiveTrafficScreen({super.key, this.initialStationCode});
   @override
   State<LiveTrafficScreen> createState() => _LiveTrafficScreenState();
 }
@@ -29,12 +34,31 @@ class _LiveTrafficScreenState extends State<LiveTrafficScreen>
   DateTime? _lastFetch;
   StreamSubscription<StationTraffic>? _sub;
   _Filter _filter = _Filter.all;
+  int _selectedHours = 4;
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    final code = widget.initialStationCode?.trim();
+    if (code != null && code.isNotEmpty) {
+      final normalizedCode = code.toUpperCase();
+      _ctrl.text = normalizedCode;
+      _station = Station(code: normalizedCode, name: normalizedCode);
+      unawaited(_rememberStation(_station!, 'traffic'));
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _subscribe(normalizedCode);
+      });
+    }
   }
+
+  Future<void> _rememberStation(Station station, String kind) =>
+      OfflineCache.addHistory(
+        kind,
+        station.code,
+        label: '${station.name} (${station.code})',
+        data: {'stationCode': station.code, 'stationName': station.name},
+      );
 
   @override
   void dispose() {
@@ -59,8 +83,8 @@ class _LiveTrafficScreenState extends State<LiveTrafficScreen>
     _sub?.cancel();
     if (mounted) setState(() => _loading = _data == null);
 
-    _sub = LiveTrafficService.stream(code, hours: 4).listen(
-          (data) {
+    _sub = LiveTrafficService.stream(code, hours: _selectedHours).listen(
+      (data) {
         if (!mounted) return;
         setState(() {
           _loading = false;
@@ -82,16 +106,20 @@ class _LiveTrafficScreenState extends State<LiveTrafficScreen>
   /// Manual refresh — one-shot fetch, updates state immediately,
   /// stream will push the next auto-update on its own cadence.
   Future<void> _manualRefresh() async {
-    final code = _station?.code ??
-        _ctrl.text.trim().toUpperCase().split(' ').first;
+    final code =
+        _station?.code ?? _ctrl.text.trim().toUpperCase().split(' ').first;
     if (code.isEmpty) return;
     if (_refreshing) return;
     _refreshing = true;
     if (mounted) setState(() {});
 
     try {
-      final d = await LiveTrafficService.fetch(code, hours: 4);
+      final d = await LiveTrafficService.fetch(code, hours: _selectedHours);
       if (!mounted) return;
+      if (d != null && _station == null) {
+        final station = Station(code: code, name: code);
+        unawaited(_rememberStation(station, 'traffic'));
+      }
       setState(() {
         _data = d ?? _data;
         _lastFetch = DateTime.now();
@@ -114,7 +142,20 @@ class _LiveTrafficScreenState extends State<LiveTrafficScreen>
       _filter = _Filter.all;
       _error = null;
     });
+    unawaited(_rememberStation(s, 'traffic'));
     _subscribe(s.code);
+  }
+
+  void _selectHours(int hours) {
+    if (_selectedHours == hours) return;
+    setState(() {
+      _selectedHours = hours;
+      _data = null;
+      _error = null;
+    });
+    final code =
+        _station?.code ?? _ctrl.text.trim().toUpperCase().split(' ').first;
+    if (code.isNotEmpty) _subscribe(code);
   }
 
   List<TrainMovement> get _visibleMovements {
@@ -138,89 +179,122 @@ class _LiveTrafficScreenState extends State<LiveTrafficScreen>
         backgroundColor: const Color(0xFF0B132B),
         elevation: 0,
         leading: IconButton(
-          icon:
-          const Icon(Icons.arrow_back_ios_new, color: Colors.white),
+          icon: const Icon(Icons.arrow_back_ios_new, color: Colors.white),
           onPressed: () => Navigator.pop(context),
         ),
-        title: Text('Live Station Traffic',
-            style: GoogleFonts.inter(
-                color: Colors.white, fontWeight: FontWeight.bold)),
+        title: Text(
+          'Live Station Traffic',
+          style: GoogleFonts.inter(
+            color: Colors.white,
+            fontWeight: FontWeight.bold,
+          ),
+        ),
         actions: [
           if (_data != null)
             IconButton(
               tooltip: 'Refresh',
               icon: _refreshing
                   ? const SizedBox(
-                  width: 18,
-                  height: 18,
-                  child: CircularProgressIndicator(
-                      strokeWidth: 2, color: Color(0xFF00F2FE)))
+                      width: 18,
+                      height: 18,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        color: Color(0xFF00F2FE),
+                      ),
+                    )
                   : const Icon(Icons.refresh, color: Colors.white70),
               onPressed: _manualRefresh,
             ),
         ],
       ),
-      body: RefreshIndicator(
-        onRefresh: _manualRefresh,
-        color: const Color(0xFF00F2FE),
-        backgroundColor: const Color(0xFF1C2541),
-        child: SingleChildScrollView(
-          physics: const AlwaysScrollableScrollPhysics(),
-          child: Column(
-            children: [
-              Padding(
-                padding: const EdgeInsets.fromLTRB(20, 16, 20, 8),
-                child: Container(
-                  padding:
-                  const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
-                  decoration: BoxDecoration(
-                    color: Colors.white.withOpacity(0.04),
-                    borderRadius: BorderRadius.circular(16),
-                    border:
-                    Border.all(color: Colors.white.withOpacity(0.06)),
-                  ),
-                  child: StationAutocomplete(
-                    controller: _ctrl,
-                    label: 'Station',
-                    hint: 'Search station (name or code)',
-                    icon: Icons.search,
-                    onStationSelected: _onStationSelected,
-                  ),
-                ),
-              ),
-              if (_data != null)
-                _LiveHeader(
-                  data: _data!,
-                  filter: _filter,
-                  onFilterChanged: (f) => setState(() => _filter = f),
-                  lastFetch: _lastFetch,
-                ),
-              if (_loading)
+      body: Container(
+        decoration: const BoxDecoration(
+          gradient: LinearGradient(
+            colors: [Color(0xFF0B132B), Color(0xFF10213B), Color(0xFF0B132B)],
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+          ),
+        ),
+        child: RefreshIndicator(
+          onRefresh: _manualRefresh,
+          color: const Color(0xFF00F2FE),
+          backgroundColor: const Color(0xFF1C2541),
+          child: SingleChildScrollView(
+            physics: const AlwaysScrollableScrollPhysics(),
+            child: Column(
+              children: [
                 const Padding(
-                  padding: EdgeInsets.symmetric(vertical: 60),
-                  child: LoadingIndicator(
-                      color: Colors.redAccent,
-                      label: 'Loading live board…'),
-                )
-              else if (_error != null && _data == null)
-                Padding(
-                  padding: const EdgeInsets.all(20),
-                  child: ErrorBox(
-                      message: _error!,
-                      onRetry: _manualRefresh),
-                )
-              else if (_data == null || _visibleMovements.isEmpty)
-                _emptyState()
-              else
-                ListView.builder(
-                  shrinkWrap: true,
-                  physics: const NeverScrollableScrollPhysics(),
-                  padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
-                  itemCount: _visibleMovements.length,
-                  itemBuilder: (_, i) => _MovementCard(
-                      movement: _visibleMovements[i]),
+                  padding: EdgeInsets.fromLTRB(20, 4, 20, 0),
+                  child: FeatureIntro(
+                    title: 'Your station,\nat a glance.',
+                    subtitle:
+                        'Live arrivals, departures and delay updates in one board.',
+                    icon: Icons.radar_rounded,
+                    accent: Color(0xFF00F2FE),
+                  ),
                 ),
-            ],
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(20, 16, 20, 8),
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 14,
+                      vertical: 6,
+                    ),
+                    decoration: BoxDecoration(
+                      color: Colors.white.withOpacity(0.04),
+                      borderRadius: BorderRadius.circular(16),
+                      border: Border.all(color: Colors.white.withOpacity(0.06)),
+                    ),
+                    child: StationAutocomplete(
+                      controller: _ctrl,
+                      label: 'Station',
+                      hint: 'Search station (name or code)',
+                      icon: Icons.search,
+                      onStationSelected: _onStationSelected,
+                    ),
+                  ),
+                ),
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 4, 16, 10),
+                  child: _TrafficWindowSelector(
+                    selectedHours: _selectedHours,
+                    onSelected: _selectHours,
+                  ),
+                ),
+                if (_data != null)
+                  _LiveHeader(
+                    data: _data!,
+                    selectedHours: _selectedHours,
+                    filter: _filter,
+                    onFilterChanged: (f) => setState(() => _filter = f),
+                    lastFetch: _lastFetch,
+                  ),
+                if (_loading)
+                  const Padding(
+                    padding: EdgeInsets.symmetric(vertical: 60),
+                    child: LoadingIndicator(
+                      color: Colors.redAccent,
+                      label: 'Loading live board…',
+                    ),
+                  )
+                else if (_error != null && _data == null)
+                  Padding(
+                    padding: const EdgeInsets.all(20),
+                    child: ErrorBox(message: _error!, onRetry: _manualRefresh),
+                  )
+                else if (_data == null || _visibleMovements.isEmpty)
+                  _emptyState()
+                else
+                  ListView.builder(
+                    shrinkWrap: true,
+                    physics: const NeverScrollableScrollPhysics(),
+                    padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
+                    itemCount: _visibleMovements.length,
+                    itemBuilder: (_, i) =>
+                        _MovementCard(movement: _visibleMovements[i]),
+                  ),
+              ],
+            ),
           ),
         ),
       ),
@@ -236,9 +310,7 @@ class _LiveTrafficScreenState extends State<LiveTrafficScreen>
           mainAxisSize: MainAxisSize.min,
           children: [
             Icon(
-              hasStation
-                  ? Icons.check_circle_outline
-                  : Icons.train_outlined,
+              hasStation ? Icons.check_circle_outline : Icons.train_outlined,
               color: hasStation ? Colors.greenAccent : Colors.white38,
               size: 48,
             ),
@@ -246,10 +318,10 @@ class _LiveTrafficScreenState extends State<LiveTrafficScreen>
             Text(
               hasStation
                   ? (_filter == _Filter.delayed
-                  ? 'No delayed trains in the next 4 hours.'
-                  : _filter == _Filter.onTime
-                  ? 'No on-time trains in the next 4 hours.'
-                  : 'No movements in the next 4 hours.')
+                        ? 'No delayed trains in the selected $_selectedHours-hour window.'
+                        : _filter == _Filter.onTime
+                        ? 'No on-time trains in the selected $_selectedHours-hour window.'
+                        : 'No movements in the selected $_selectedHours-hour window.')
                   : 'Pick a station to see its live board',
               textAlign: TextAlign.center,
               style: GoogleFonts.inter(color: Colors.white54),
@@ -261,17 +333,125 @@ class _LiveTrafficScreenState extends State<LiveTrafficScreen>
   }
 }
 
+class _TrafficWindowSelector extends StatelessWidget {
+  final int selectedHours;
+  final ValueChanged<int> onSelected;
+
+  const _TrafficWindowSelector({
+    required this.selectedHours,
+    required this.onSelected,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      decoration: BoxDecoration(
+        color: const Color(0xFF1C2541),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: Colors.white.withOpacity(0.06)),
+      ),
+      child: Row(
+        children: [
+          const Icon(
+            Icons.schedule_rounded,
+            color: Color(0xFF00F2FE),
+            size: 16,
+          ),
+          const SizedBox(width: 7),
+          Text(
+            'WINDOW',
+            style: GoogleFonts.inter(
+              color: Colors.white54,
+              fontSize: 9,
+              fontWeight: FontWeight.w900,
+              letterSpacing: 0.7,
+            ),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Row(
+              children: [2, 4, 6, 8]
+                  .map(
+                    (hours) => Expanded(
+                      child: Padding(
+                        padding: EdgeInsets.only(right: hours == 8 ? 0 : 6),
+                        child: _TrafficWindowChip(
+                          hours: hours,
+                          selected: selectedHours == hours,
+                          onTap: () => onSelected(hours),
+                        ),
+                      ),
+                    ),
+                  )
+                  .toList(),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _TrafficWindowChip extends StatelessWidget {
+  final int hours;
+  final bool selected;
+  final VoidCallback onTap;
+
+  const _TrafficWindowChip({
+    required this.hours,
+    required this.selected,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: selected
+          ? const Color(0xFF00F2FE).withOpacity(0.16)
+          : Colors.white.withOpacity(0.035),
+      borderRadius: BorderRadius.circular(10),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(10),
+        child: Container(
+          height: 32,
+          alignment: Alignment.center,
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(10),
+            border: Border.all(
+              color: selected
+                  ? const Color(0xFF00F2FE).withOpacity(0.55)
+                  : Colors.white.withOpacity(0.06),
+            ),
+          ),
+          child: Text(
+            '${hours}h',
+            style: GoogleFonts.inter(
+              color: selected ? const Color(0xFF00F2FE) : Colors.white60,
+              fontSize: 10,
+              fontWeight: FontWeight.w900,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 // ═════════════════════════════════════════════════════════════════════
 // LIVE HEADER — counts + filters + window
 // ═════════════════════════════════════════════════════════════════════
 class _LiveHeader extends StatelessWidget {
   final StationTraffic data;
+  final int selectedHours;
   final _Filter filter;
   final ValueChanged<_Filter> onFilterChanged;
   final DateTime? lastFetch;
 
   const _LiveHeader({
     required this.data,
+    required this.selectedHours,
     required this.filter,
     required this.onFilterChanged,
     this.lastFetch,
@@ -293,8 +473,7 @@ class _LiveHeader extends StatelessWidget {
             end: Alignment.bottomRight,
           ),
           borderRadius: BorderRadius.circular(18),
-          border: Border.all(
-              color: const Color(0xFF00F2FE).withOpacity(0.25)),
+          border: Border.all(color: const Color(0xFF00F2FE).withOpacity(0.25)),
         ),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -309,14 +488,16 @@ class _LiveHeader extends StatelessWidget {
                     color: const Color(0xFF00F2FE).withOpacity(0.12),
                     shape: BoxShape.circle,
                     border: Border.all(
-                        color: const Color(0xFF00F2FE).withOpacity(0.5)),
+                      color: const Color(0xFF00F2FE).withOpacity(0.5),
+                    ),
                   ),
                   child: Text(
                     data.stationCode,
                     style: GoogleFonts.inter(
-                        color: const Color(0xFF00F2FE),
-                        fontSize: 10,
-                        fontWeight: FontWeight.w900),
+                      color: const Color(0xFF00F2FE),
+                      fontSize: 10,
+                      fontWeight: FontWeight.w900,
+                    ),
                   ),
                 ),
                 const SizedBox(width: 10),
@@ -329,9 +510,10 @@ class _LiveHeader extends StatelessWidget {
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                         style: GoogleFonts.inter(
-                            color: Colors.white,
-                            fontSize: 14,
-                            fontWeight: FontWeight.w900),
+                          color: Colors.white,
+                          fontSize: 14,
+                          fontWeight: FontWeight.w900,
+                        ),
                       ),
                       const SizedBox(height: 2),
                       Row(
@@ -339,18 +521,23 @@ class _LiveHeader extends StatelessWidget {
                           _liveDot(),
                           const SizedBox(width: 5),
                           Text(
-                            'LIVE • next ${data.hoursAhead}h',
+                            'LIVE • ${selectedHours}h window',
                             style: GoogleFonts.inter(
-                                color: const Color(0xFF00F2FE),
-                                fontSize: 9,
-                                fontWeight: FontWeight.w900,
-                                letterSpacing: 0.6),
+                              color: const Color(0xFF00F2FE),
+                              fontSize: 9,
+                              fontWeight: FontWeight.w900,
+                              letterSpacing: 0.6,
+                            ),
                           ),
                           if (lastFetch != null) ...[
                             const SizedBox(width: 8),
-                            Text('· ${_relative(lastFetch!)}',
-                                style: GoogleFonts.inter(
-                                    color: Colors.white38, fontSize: 9)),
+                            Text(
+                              '· ${_formatDateTimeInIst(lastFetch!)}',
+                              style: GoogleFonts.inter(
+                                color: Colors.white38,
+                                fontSize: 9,
+                              ),
+                            ),
                           ],
                         ],
                       ),
@@ -361,19 +548,24 @@ class _LiveHeader extends StatelessWidget {
                   Column(
                     crossAxisAlignment: CrossAxisAlignment.end,
                     children: [
-                      Text('WINDOW',
-                          style: GoogleFonts.inter(
-                              color: Colors.white38,
-                              fontSize: 8,
-                              letterSpacing: 1,
-                              fontWeight: FontWeight.w800)),
+                      Text(
+                        'WINDOW',
+                        style: GoogleFonts.inter(
+                          color: Colors.white38,
+                          fontSize: 8,
+                          letterSpacing: 1,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
                       const SizedBox(height: 2),
                       Text(
-                        '${data.windowFrom} – ${data.windowTo}',
+                        '${_formatBoardTime(data.windowFrom)} – '
+                        '${_formatBoardTime(data.windowTo)}',
                         style: GoogleFonts.inter(
-                            color: Colors.white,
-                            fontSize: 11,
-                            fontWeight: FontWeight.w700),
+                          color: Colors.white,
+                          fontSize: 11,
+                          fontWeight: FontWeight.w700,
+                        ),
                       ),
                     ],
                   ),
@@ -382,19 +574,26 @@ class _LiveHeader extends StatelessWidget {
             const SizedBox(height: 12),
             Row(
               children: [
-                _countPill(Icons.train_rounded, '${data.totalCount}',
-                    'TOTAL', const Color(0xFF00F2FE)),
+                _countPill(
+                  Icons.train_rounded,
+                  '${data.totalCount}',
+                  'TOTAL',
+                  const Color(0xFF00F2FE),
+                ),
                 const SizedBox(width: 8),
                 _countPill(
-                    Icons.timer_outlined,
-                    '$delayed',
-                    'DELAYED',
-                    delayed > 0
-                        ? Colors.orangeAccent
-                        : Colors.greenAccent),
+                  Icons.timer_outlined,
+                  '$delayed',
+                  'DELAYED',
+                  delayed > 0 ? Colors.orangeAccent : Colors.greenAccent,
+                ),
                 const SizedBox(width: 8),
-                _countPill(Icons.check_circle_outline, '$onTime',
-                    'ON TIME', Colors.greenAccent),
+                _countPill(
+                  Icons.check_circle_outline,
+                  '$onTime',
+                  'ON TIME',
+                  Colors.greenAccent,
+                ),
               ],
             ),
             const SizedBox(height: 12),
@@ -436,8 +635,7 @@ class _LiveHeader extends StatelessWidget {
     );
   }
 
-  Widget _countPill(
-      IconData icon, String value, String label, Color color) {
+  Widget _countPill(IconData icon, String value, String label, Color color) {
     return Expanded(
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
@@ -454,19 +652,25 @@ class _LiveHeader extends StatelessWidget {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(value,
-                      style: GoogleFonts.inter(
-                          color: color,
-                          fontWeight: FontWeight.w900,
-                          fontSize: 14,
-                          height: 1)),
+                  Text(
+                    value,
+                    style: GoogleFonts.inter(
+                      color: color,
+                      fontWeight: FontWeight.w900,
+                      fontSize: 14,
+                      height: 1,
+                    ),
+                  ),
                   const SizedBox(height: 2),
-                  Text(label,
-                      style: GoogleFonts.inter(
-                          color: Colors.white38,
-                          fontSize: 8,
-                          fontWeight: FontWeight.w800,
-                          letterSpacing: 0.5)),
+                  Text(
+                    label,
+                    style: GoogleFonts.inter(
+                      color: Colors.white38,
+                      fontSize: 8,
+                      fontWeight: FontWeight.w800,
+                      letterSpacing: 0.5,
+                    ),
+                  ),
                 ],
               ),
             ),
@@ -485,36 +689,29 @@ class _LiveHeader extends StatelessWidget {
       onTap: () => onFilterChanged(f),
       borderRadius: BorderRadius.circular(20),
       child: Container(
-        padding:
-        const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
         decoration: BoxDecoration(
           color: active
               ? const Color(0xFF00F2FE).withOpacity(0.15)
               : Colors.white.withOpacity(0.03),
           borderRadius: BorderRadius.circular(20),
           border: Border.all(
-              color: active
-                  ? const Color(0xFF00F2FE).withOpacity(0.6)
-                  : Colors.white.withOpacity(0.06)),
+            color: active
+                ? const Color(0xFF00F2FE).withOpacity(0.6)
+                : Colors.white.withOpacity(0.06),
+          ),
         ),
         child: Text(
           '$label · $count',
           style: GoogleFonts.inter(
-              color: color,
-              fontSize: 10,
-              fontWeight: FontWeight.w900,
-              letterSpacing: 0.4),
+            color: color,
+            fontSize: 10,
+            fontWeight: FontWeight.w900,
+            letterSpacing: 0.4,
+          ),
         ),
       ),
     );
-  }
-
-  static String _relative(DateTime t) {
-    final d = DateTime.now().difference(t);
-    if (d.inSeconds < 10) return 'just now';
-    if (d.inSeconds < 60) return '${d.inSeconds}s ago';
-    if (d.inMinutes < 60) return '${d.inMinutes}m ago';
-    return '${d.inHours}h ago';
   }
 }
 
@@ -548,8 +745,8 @@ class _MovementCard extends StatelessWidget {
     final borderColor = delayed
         ? Colors.orangeAccent.withOpacity(0.35)
         : (isAtStation
-        ? const Color(0xFF00F2FE).withOpacity(0.4)
-        : Colors.white.withOpacity(0.05));
+              ? const Color(0xFF00F2FE).withOpacity(0.4)
+              : Colors.white.withOpacity(0.05));
 
     return Container(
       margin: const EdgeInsets.only(bottom: 10),
@@ -572,37 +769,45 @@ class _MovementCard extends StatelessWidget {
                   children: [
                     Container(
                       padding: const EdgeInsets.symmetric(
-                          horizontal: 8, vertical: 3),
+                        horizontal: 8,
+                        vertical: 3,
+                      ),
                       decoration: BoxDecoration(
-                        color:
-                        const Color(0xFF00F2FE).withOpacity(0.12),
+                        color: const Color(0xFF00F2FE).withOpacity(0.12),
                         borderRadius: BorderRadius.circular(6),
                       ),
-                      child: Text(m.trainNumber,
-                          style: GoogleFonts.inter(
-                              color: const Color(0xFF00F2FE),
-                              fontWeight: FontWeight.w900,
-                              fontSize: 11)),
+                      child: Text(
+                        m.trainNumber,
+                        style: GoogleFonts.inter(
+                          color: const Color(0xFF00F2FE),
+                          fontWeight: FontWeight.w900,
+                          fontSize: 11,
+                        ),
+                      ),
                     ),
                     if (isAtStation) ...[
                       const SizedBox(width: 6),
                       Container(
                         padding: const EdgeInsets.symmetric(
-                            horizontal: 6, vertical: 2),
+                          horizontal: 6,
+                          vertical: 2,
+                        ),
                         decoration: BoxDecoration(
-                          color: const Color(0xFF00F2FE)
-                              .withOpacity(0.15),
+                          color: const Color(0xFF00F2FE).withOpacity(0.15),
                           borderRadius: BorderRadius.circular(4),
                           border: Border.all(
-                              color: const Color(0xFF00F2FE)
-                                  .withOpacity(0.5)),
+                            color: const Color(0xFF00F2FE).withOpacity(0.5),
+                          ),
                         ),
-                        child: Text('AT STATION',
-                            style: GoogleFonts.inter(
-                                color: const Color(0xFF00F2FE),
-                                fontSize: 8,
-                                fontWeight: FontWeight.w900,
-                                letterSpacing: 0.5)),
+                        child: Text(
+                          'AT STATION',
+                          style: GoogleFonts.inter(
+                            color: const Color(0xFF00F2FE),
+                            fontSize: 8,
+                            fontWeight: FontWeight.w900,
+                            letterSpacing: 0.5,
+                          ),
+                        ),
                       ),
                     ],
                     const SizedBox(width: 8),
@@ -612,49 +817,69 @@ class _MovementCard extends StatelessWidget {
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                         style: GoogleFonts.inter(
-                            color: Colors.white,
-                            fontWeight: FontWeight.w800,
-                            fontSize: 13),
+                          color: Colors.white,
+                          fontWeight: FontWeight.w800,
+                          fontSize: 13,
+                        ),
                       ),
                     ),
                     if (delayed)
                       Container(
                         padding: const EdgeInsets.symmetric(
-                            horizontal: 8, vertical: 3),
+                          horizontal: 8,
+                          vertical: 3,
+                        ),
                         decoration: BoxDecoration(
-                          color:
-                          Colors.orangeAccent.withOpacity(0.15),
+                          color: Colors.orangeAccent.withOpacity(0.15),
                           borderRadius: BorderRadius.circular(6),
                         ),
-                        child: Text('+${m.delayMinutes}m',
-                            style: GoogleFonts.inter(
-                                color: Colors.orangeAccent,
-                                fontWeight: FontWeight.w900,
-                                fontSize: 10)),
+                        child: Text(
+                          '+${m.delayMinutes}m',
+                          style: GoogleFonts.inter(
+                            color: Colors.orangeAccent,
+                            fontWeight: FontWeight.w900,
+                            fontSize: 10,
+                          ),
+                        ),
                       ),
                     const SizedBox(width: 6),
-                    const Icon(Icons.chevron_right_rounded,
-                        color: Colors.white38, size: 20),
+                    const Icon(
+                      Icons.chevron_right_rounded,
+                      color: Colors.white38,
+                      size: 20,
+                    ),
                   ],
                 ),
                 const SizedBox(height: 6),
                 Row(
                   children: [
-                    const Icon(Icons.trip_origin,
-                        size: 10, color: Color(0xFF00F2FE)),
+                    const Icon(
+                      Icons.trip_origin,
+                      size: 10,
+                      color: Color(0xFF00F2FE),
+                    ),
                     const SizedBox(width: 4),
-                    Text(_shorten(m.source),
-                        style: GoogleFonts.inter(
-                            color: Colors.white70,
-                            fontSize: 11,
-                            fontWeight: FontWeight.w600)),
+                    Text(
+                      _shorten(m.source),
+                      style: GoogleFonts.inter(
+                        color: Colors.white70,
+                        fontSize: 11,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
                     const Padding(
                       padding: EdgeInsets.symmetric(horizontal: 6),
-                      child: Icon(Icons.arrow_forward,
-                          size: 10, color: Colors.white38),
+                      child: Icon(
+                        Icons.arrow_forward,
+                        size: 10,
+                        color: Colors.white38,
+                      ),
                     ),
-                    const Icon(Icons.location_on,
-                        size: 10, color: Color(0xFFFF6E6E)),
+                    const Icon(
+                      Icons.location_on,
+                      size: 10,
+                      color: Color(0xFFFF6E6E),
+                    ),
                     const SizedBox(width: 4),
                     Expanded(
                       child: Text(
@@ -662,9 +887,10 @@ class _MovementCard extends StatelessWidget {
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                         style: GoogleFonts.inter(
-                            color: Colors.white70,
-                            fontSize: 11,
-                            fontWeight: FontWeight.w600),
+                          color: Colors.white70,
+                          fontSize: 11,
+                          fontWeight: FontWeight.w600,
+                        ),
                       ),
                     ),
                     if (isOrigin)
@@ -677,30 +903,40 @@ class _MovementCard extends StatelessWidget {
                 Row(
                   children: [
                     _timeBlock(
-                        label: 'ARR',
-                        value: m.arrival,
-                        show: m.hasArrival),
+                      label: 'ARR',
+                      value: _formatBoardTime(m.expectedArrival ?? m.arrival),
+                      show: m.expectedArrival != null || m.hasArrival,
+                    ),
                     const SizedBox(width: 16),
                     _timeBlock(
-                        label: 'DEP',
-                        value: m.departure,
-                        show: m.hasDeparture),
+                      label: 'DEP',
+                      value: _formatBoardTime(
+                        m.expectedDeparture ?? m.departure,
+                      ),
+                      show: m.expectedDeparture != null || m.hasDeparture,
+                    ),
                     const Spacer(),
                     if (m.platform != null && m.platform!.isNotEmpty)
                       Container(
                         padding: const EdgeInsets.symmetric(
-                            horizontal: 8, vertical: 3),
+                          horizontal: 8,
+                          vertical: 3,
+                        ),
                         decoration: BoxDecoration(
                           color: Colors.white.withOpacity(0.06),
                           borderRadius: BorderRadius.circular(6),
                           border: Border.all(
-                              color: Colors.white.withOpacity(0.08)),
+                            color: Colors.white.withOpacity(0.08),
+                          ),
                         ),
-                        child: Text('PF ${m.platform}',
-                            style: GoogleFonts.inter(
-                                color: Colors.white70,
-                                fontSize: 10,
-                                fontWeight: FontWeight.w800)),
+                        child: Text(
+                          'PF ${m.platform}',
+                          style: GoogleFonts.inter(
+                            color: Colors.white70,
+                            fontSize: 10,
+                            fontWeight: FontWeight.w800,
+                          ),
+                        ),
                       ),
                   ],
                 ),
@@ -723,12 +959,15 @@ class _MovementCard extends StatelessWidget {
         color: color.withOpacity(0.15),
         borderRadius: BorderRadius.circular(4),
       ),
-      child: Text(label,
-          style: GoogleFonts.inter(
-              color: color,
-              fontSize: 8,
-              fontWeight: FontWeight.w900,
-              letterSpacing: 0.4)),
+      child: Text(
+        label,
+        style: GoogleFonts.inter(
+          color: color,
+          fontSize: 8,
+          fontWeight: FontWeight.w900,
+          letterSpacing: 0.4,
+        ),
+      ),
     );
   }
 
@@ -744,18 +983,24 @@ class _MovementCard extends StatelessWidget {
         Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(label,
-                style: GoogleFonts.inter(
-                    color: Colors.white38,
-                    fontSize: 8,
-                    fontWeight: FontWeight.w800,
-                    letterSpacing: 0.5)),
+            Text(
+              label,
+              style: GoogleFonts.inter(
+                color: Colors.white38,
+                fontSize: 8,
+                fontWeight: FontWeight.w800,
+                letterSpacing: 0.5,
+              ),
+            ),
             const SizedBox(height: 1),
-            Text(show ? (value ?? '--') : '—',
-                style: GoogleFonts.inter(
-                    color: show ? Colors.white : Colors.white24,
-                    fontSize: 13,
-                    fontWeight: FontWeight.w900)),
+            Text(
+              show ? (value ?? '--') : '—',
+              style: GoogleFonts.inter(
+                color: show ? Colors.white : Colors.white24,
+                fontSize: 13,
+                fontWeight: FontWeight.w900,
+              ),
+            ),
           ],
         ),
       ],
@@ -768,6 +1013,49 @@ class _MovementCard extends StatelessWidget {
   }
 }
 
+String _formatBoardTime(String? value) {
+  if (value == null || value.trim().isEmpty || value.trim() == '--') {
+    return '--';
+  }
+
+  final text = value.trim();
+  final timestamp = DateTime.tryParse(text);
+  if (timestamp != null && text.contains('T')) {
+    final ist = timestamp.toUtc().add(const Duration(hours: 5, minutes: 30));
+    return DateFormat('h:mm a').format(ist);
+  }
+
+  final match = RegExp(
+    r'^(\d{1,2}):(\d{2})(?::\d{2})?\s*(AM|PM)?$',
+    caseSensitive: false,
+  ).firstMatch(text);
+  if (match == null) return '--';
+
+  final hour = int.tryParse(match.group(1)!);
+  final minute = int.tryParse(match.group(2)!);
+  final period = match.group(3)?.toUpperCase();
+  if (hour == null || minute == null || minute > 59) return '--';
+
+  late final int hour12;
+  late final String meridiem;
+  if (period != null) {
+    if (hour < 1 || hour > 12) return '--';
+    hour12 = hour;
+    meridiem = period;
+  } else {
+    if (hour > 23) return '--';
+    hour12 = hour % 12 == 0 ? 12 : hour % 12;
+    meridiem = hour < 12 ? 'AM' : 'PM';
+  }
+
+  return '$hour12:${minute.toString().padLeft(2, '0')} $meridiem';
+}
+
+String _formatDateTimeInIst(DateTime dateTime) {
+  final ist = dateTime.toUtc().add(const Duration(hours: 5, minutes: 30));
+  return DateFormat('h:mm a').format(ist);
+}
+
 // ═════════════════════════════════════════════════════════════════════
 // RUN DAYS ROW
 // ═════════════════════════════════════════════════════════════════════
@@ -777,8 +1065,13 @@ class _RunDays extends StatelessWidget {
 
   static const _order = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'];
   static const _label = {
-    'mon': 'M', 'tue': 'T', 'wed': 'W', 'thu': 'T',
-    'fri': 'F', 'sat': 'S', 'sun': 'S',
+    'mon': 'M',
+    'tue': 'T',
+    'wed': 'W',
+    'thu': 'T',
+    'fri': 'F',
+    'sat': 'S',
+    'sun': 'S',
   };
 
   @override
@@ -790,12 +1083,15 @@ class _RunDays extends StatelessWidget {
 
     return Row(
       children: [
-        Text('RUNS',
-            style: GoogleFonts.inter(
-                color: Colors.white38,
-                fontSize: 8,
-                fontWeight: FontWeight.w800,
-                letterSpacing: 0.8)),
+        Text(
+          'RUNS',
+          style: GoogleFonts.inter(
+            color: Colors.white38,
+            fontSize: 8,
+            fontWeight: FontWeight.w800,
+            letterSpacing: 0.8,
+          ),
+        ),
         const SizedBox(width: 6),
         ..._order.map((d) {
           final active = set.contains(d);
@@ -819,8 +1115,7 @@ class _RunDays extends StatelessWidget {
               child: Text(
                 _label[d]!,
                 style: GoogleFonts.inter(
-                  color:
-                  active ? const Color(0xFF00F2FE) : Colors.white24,
+                  color: active ? const Color(0xFF00F2FE) : Colors.white24,
                   fontSize: 8,
                   fontWeight: FontWeight.w900,
                 ),
