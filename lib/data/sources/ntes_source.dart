@@ -111,16 +111,11 @@ class NtesSource {
   /// RailRadar ko call karke router ko status batao.
   /// Returns null jab router allow na kare ya call fail ho.
   static Future<T?> _tryRailRadar<T>(Future<T?> Function() call) async {
-    if (!ApiRouter.useRailRadar) return null;
-
     RailRadarSource.clearError();
     try {
-      final result = await call();
-      ApiRouter.inspectRailRadarResult(RailRadarSource.lastStatusCode);
-      return result;
+      return await call();
     } catch (e) {
       debugPrint('[RailRadar] call threw: $e');
-      ApiRouter.inspectRailRadarResult(RailRadarSource.lastStatusCode);
       return null;
     }
   }

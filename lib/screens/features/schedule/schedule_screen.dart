@@ -170,127 +170,162 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
             end: Alignment.bottomRight,
           ),
         ),
-        child: Column(
-          children: [
-            const Padding(
-              padding: EdgeInsets.fromLTRB(20, 4, 20, 0),
-              child: FeatureIntro(
-                title: 'Every stop,\nin real time.',
-                subtitle:
-                    'See arrivals, departures and platform updates at a glance.',
-                icon: Icons.view_timeline_rounded,
-                accent: Color(0xFF00F2FE),
-              ),
-            ),
-            Padding(
-              padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
-              child: Container(
-                padding: const EdgeInsets.fromLTRB(14, 10, 10, 10),
-                decoration: BoxDecoration(
-                  color: const Color(0xFF1C2541).withValues(alpha: 0.92),
-                  borderRadius: BorderRadius.circular(20),
-                  border: Border.all(
-                    color: Colors.white.withValues(alpha: 0.07),
-                  ),
-                  boxShadow: [
-                    BoxShadow(
-                      color: Colors.black.withValues(alpha: 0.12),
-                      blurRadius: 16,
-                      offset: const Offset(0, 6),
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            final compact = constraints.maxHeight < 600;
+            return Column(
+              children: [
+                if (compact)
+                  const Padding(
+                    padding: EdgeInsets.fromLTRB(20, 8, 20, 12),
+                    child: Row(
+                      children: [
+                        Icon(
+                          Icons.view_timeline_rounded,
+                          color: Color(0xFF00F2FE),
+                          size: 22,
+                        ),
+                        SizedBox(width: 10),
+                        Expanded(
+                          child: Text(
+                            'Every stop, in real time.',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              color: Colors.white,
+                              fontSize: 17,
+                              fontWeight: FontWeight.w800,
+                            ),
+                          ),
+                        ),
+                      ],
                     ),
-                  ],
+                  )
+                else
+                  const Padding(
+                    padding: EdgeInsets.fromLTRB(20, 4, 20, 0),
+                    child: FeatureIntro(
+                      title: 'Every stop,\nin real time.',
+                      subtitle:
+                          'See arrivals, departures and platform updates at a glance.',
+                      icon: Icons.view_timeline_rounded,
+                      accent: Color(0xFF00F2FE),
+                    ),
+                  ),
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+                  child: Container(
+                    padding: const EdgeInsets.fromLTRB(14, 10, 10, 10),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF1C2541).withValues(alpha: 0.92),
+                      borderRadius: BorderRadius.circular(20),
+                      border: Border.all(
+                        color: Colors.white.withValues(alpha: 0.07),
+                      ),
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.black.withValues(alpha: 0.12),
+                          blurRadius: 16,
+                          offset: const Offset(0, 6),
+                        ),
+                      ],
+                    ),
+                    child: Row(
+                      children: [
+                        Expanded(
+                          child: StationAutocomplete(
+                            controller: _ctrl,
+                            label: 'Station',
+                            hint: 'Search name or enter station code',
+                            icon: Icons.train_rounded,
+                            onStationSelected: _selectStation,
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        Material(
+                          color: const Color(0xFF00F2FE),
+                          borderRadius: BorderRadius.circular(14),
+                          child: InkWell(
+                            borderRadius: BorderRadius.circular(14),
+                            onTap: _loading ? null : () => _fetch(),
+                            child: const SizedBox(
+                              width: 46,
+                              height: 46,
+                              child: Icon(
+                                Icons.search_rounded,
+                                color: Color(0xFF0B132B),
+                              ),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
                 ),
-                child: Row(
-                  children: [
-                    Expanded(
-                      child: StationAutocomplete(
-                        controller: _ctrl,
-                        label: 'Station',
-                        hint: 'Search name or enter station code',
-                        icon: Icons.train_rounded,
-                        onStationSelected: _selectStation,
+                if (_loading)
+                  const Expanded(
+                    child: Center(
+                      child: LoadingIndicator(
+                        color: Color(0xFF00F2FE),
+                        label: 'Loading live station board…',
                       ),
                     ),
-                    const SizedBox(width: 8),
-                    Material(
+                  )
+                else if (_error != null && board == null)
+                  Expanded(
+                    child: Center(
+                      child: Padding(
+                        padding: const EdgeInsets.all(20),
+                        child: ErrorBox(
+                          message: _error!,
+                          onRetry: () => _fetch(),
+                        ),
+                      ),
+                    ),
+                  )
+                else if (board == null)
+                  const Expanded(child: _BoardPlaceholder())
+                else
+                  Expanded(
+                    child: RefreshIndicator(
+                      onRefresh: () => _fetch(refresh: true),
                       color: const Color(0xFF00F2FE),
-                      borderRadius: BorderRadius.circular(14),
-                      child: InkWell(
-                        borderRadius: BorderRadius.circular(14),
-                        onTap: _loading ? null : () => _fetch(),
-                        child: const SizedBox(
-                          width: 46,
-                          height: 46,
-                          child: Icon(
-                            Icons.search_rounded,
-                            color: Color(0xFF0B132B),
+                      backgroundColor: const Color(0xFF1C2541),
+                      child: ListView(
+                        physics: const AlwaysScrollableScrollPhysics(),
+                        padding: const EdgeInsets.fromLTRB(16, 0, 16, 24),
+                        children: [
+                          _BoardHeader(
+                            board: board,
+                            error: _error,
+                            onRetry: () => _fetch(refresh: true),
                           ),
-                        ),
+                          const SizedBox(height: 14),
+                          if (board.trains.isEmpty)
+                            const _EmptyBoard()
+                          else
+                            ...board.trains.map(
+                              (train) => Padding(
+                                padding: const EdgeInsets.only(bottom: 12),
+                                child: _LiveTrainCard(train: train),
+                              ),
+                            ),
+                          const SizedBox(height: 8),
+                          Text(
+                            '• Pull down to refresh',
+                            textAlign: TextAlign.center,
+                            style: GoogleFonts.inter(
+                              color: Colors.white30,
+                              fontSize: 10,
+                            ),
+                          ),
+                        ],
                       ),
                     ),
-                  ],
-                ),
-              ),
-            ),
-            if (_loading)
-              const Expanded(
-                child: Center(
-                  child: LoadingIndicator(
-                    color: Color(0xFF00F2FE),
-                    label: 'Loading live station board…',
                   ),
-                ),
-              )
-            else if (_error != null && board == null)
-              Expanded(
-                child: Center(
-                  child: Padding(
-                    padding: const EdgeInsets.all(20),
-                    child: ErrorBox(message: _error!, onRetry: () => _fetch()),
-                  ),
-                ),
-              )
-            else if (board == null)
-              const Expanded(child: _BoardPlaceholder())
-            else
-              Expanded(
-                child: RefreshIndicator(
-                  onRefresh: () => _fetch(refresh: true),
-                  color: const Color(0xFF00F2FE),
-                  backgroundColor: const Color(0xFF1C2541),
-                  child: ListView(
-                    physics: const AlwaysScrollableScrollPhysics(),
-                    padding: const EdgeInsets.fromLTRB(16, 0, 16, 24),
-                    children: [
-                      _BoardHeader(
-                        board: board,
-                        error: _error,
-                        onRetry: () => _fetch(refresh: true),
-                      ),
-                      const SizedBox(height: 14),
-                      if (board.trains.isEmpty)
-                        const _EmptyBoard()
-                      else
-                        ...board.trains.map(
-                          (train) => Padding(
-                            padding: const EdgeInsets.only(bottom: 12),
-                            child: _LiveTrainCard(train: train),
-                          ),
-                        ),
-                      const SizedBox(height: 8),
-                      Text(
-                        '• Pull down to refresh',
-                        textAlign: TextAlign.center,
-                        style: GoogleFonts.inter(
-                          color: Colors.white30,
-                          fontSize: 10,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-          ],
+              ],
+            );
+          },
         ),
       ),
     );

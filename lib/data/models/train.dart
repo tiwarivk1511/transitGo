@@ -1,11 +1,39 @@
-// ═════════════════════════════════════════════════════════════════════
-// TRAIN TRACKING — top-level live status
-// ═════════════════════════════════════════════════════════════════════
 import 'package:latlong2/latlong.dart';
 
 import '../sources/station_source.dart';
 import 'coach.dart';
 
+class TrainJourneyInfo {
+  final String trainType;
+  final String fromCode;
+  final String fromName;
+  final String toCode;
+  final String toName;
+  final String departure;
+  final String arrival;
+  final int distanceKm;
+  final int? durationMin;
+  final int? halts;
+  final List<String> runDays;
+
+  const TrainJourneyInfo({
+    required this.trainType,
+    required this.fromCode,
+    required this.fromName,
+    required this.toCode,
+    required this.toName,
+    required this.departure,
+    required this.arrival,
+    required this.distanceKm,
+    this.durationMin,
+    this.halts,
+    this.runDays = const [],
+  });
+}
+
+// ═════════════════════════════════════════════════════════════════════
+// TRAIN TRACKING — top-level live status
+// ═════════════════════════════════════════════════════════════════════
 class TrainTracking {
   final String trainNumber;
   final String trainName;

@@ -7,17 +7,12 @@ class PermissionHelper {
   /// On Web and Desktop (Windows/Linux/macOS), permissions are managed by the browser/OS natively.
   static Future<bool> requestAllPermissions() async {
     if (kIsWeb) return true;
-    
+
     if (Platform.isAndroid || Platform.isIOS) {
-      final statuses = await [
-        Permission.location,
-        Permission.notification,
-      ].request();
+      final notificationStatus = await Permission.notification.request();
+      final locationStatus = await Permission.locationWhenInUse.request();
 
-      final locationGranted = statuses[Permission.location]?.isGranted ?? false;
-      final notificationGranted = statuses[Permission.notification]?.isGranted ?? false;
-
-      return locationGranted || notificationGranted;
+      return notificationStatus.isGranted && locationStatus.isGranted;
     }
 
     return true;
@@ -25,7 +20,7 @@ class PermissionHelper {
 
   static Future<bool> requestLocation() async {
     if (kIsWeb || (!Platform.isAndroid && !Platform.isIOS)) return true;
-    final status = await Permission.location.request();
+    final status = await Permission.locationWhenInUse.request();
     return status.isGranted;
   }
 

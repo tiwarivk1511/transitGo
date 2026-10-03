@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:http/http.dart' as http;
@@ -16,6 +17,9 @@ class RailRadarSource {
           .trim();
 
   static const Duration _timeout = Duration(seconds: 12);
+  static const Duration _minRequestGap = Duration(seconds: 2);
+  static Future<void> _requestQueue = Future<void>.value();
+  static DateTime? _lastRequestAt;
 
   /// Toggle to `false` once auth is confirmed working.
   static const bool _verboseAuth = true;
@@ -68,16 +72,42 @@ class RailRadarSource {
   // ═══════════════════════════════════════════════════════════════════
   // CORE GET
   // ═══════════════════════════════════════════════════════════════════
-  static Future<dynamic> _get(
-      String path, {
-        Map<String, String>? query,
-      }) async {
+  static Future<dynamic> _get(String path, {Map<String, String>? query}) async {
+    final previousRequest = _requestQueue;
+    final releaseRequest = Completer<void>();
+    _requestQueue = releaseRequest.future;
+    await previousRequest;
+    try {
+      if (!ApiRouter.useRailRadar) {
+        _lastStatus = null;
+        _lastError = 'RailRadar requests are paused';
+        return null;
+      }
+
+      final lastRequestAt = _lastRequestAt;
+      if (lastRequestAt != null) {
+        final elapsed = DateTime.now().difference(lastRequestAt);
+        if (elapsed < _minRequestGap) {
+          await Future.delayed(_minRequestGap - elapsed);
+        }
+      }
+      return await _getUnlocked(path, query: query);
+    } finally {
+      _lastRequestAt = DateTime.now();
+      releaseRequest.complete();
+    }
+  }
+
+  static Future<dynamic> _getUnlocked(
+    String path, {
+    Map<String, String>? query,
+  }) async {
     _lastStatus = null;
     _lastError = null;
 
-    final uri = Uri.parse('$_base$path').replace(
-      queryParameters: (query == null || query.isEmpty) ? null : query,
-    );
+    final uri = Uri.parse(
+      '$_base$path',
+    ).replace(queryParameters: (query == null || query.isEmpty) ? null : query);
 
     // ── AUTH PRE-FLIGHT (async — waits for Remote Config) ─────────
     final key = await _resolveKey();
@@ -85,7 +115,7 @@ class RailRadarSource {
       final masked = key.isEmpty
           ? '<EMPTY>'
           : '${key.substring(0, key.length < 10 ? key.length : 10)}…'
-          '(${key.length} chars)';
+                '(${key.length} chars)';
       _debug('[RailRadar] → $uri');
       _debug('[RailRadar]   base   = $_base');
       _debug('[RailRadar]   auth   = Bearer $masked');
@@ -94,14 +124,16 @@ class RailRadarSource {
 
     if (key.isEmpty) {
       _lastError =
-      'RailRadar API key not available yet. '
+          'RailRadar API key not available yet. '
           'Check Firebase Remote Config → "api_key".';
       _debug('[RailRadar] ✗ aborted — empty key');
       return null;
     }
     if (!key.startsWith('rr_')) {
-      _debug('[RailRadar] ⚠ key does not start with "rr_" — '
-          'RailRadar keys look like rr_live_… / rr_test_…');
+      _debug(
+        '[RailRadar] ⚠ key does not start with "rr_" — '
+        'RailRadar keys look like rr_live_… / rr_test_…',
+      );
     }
 
     final headers = {
@@ -112,17 +144,24 @@ class RailRadarSource {
     try {
       final res = await http.get(uri, headers: headers).timeout(_timeout);
       _lastStatus = res.statusCode;
+      ApiRouter.inspectRailRadarResult(
+        res.statusCode,
+        retryAfter: _retryAfter(res.headers['retry-after']),
+        responseBody: res.body,
+      );
 
       // ── Credit tracking on 200 ────────────────────────────────
       if (res.statusCode == 200) {
         final remaining = int.tryParse(
-            res.headers['x-credits-remaining'] ??
-                res.headers['x-ratelimit-remaining'] ??
-                '');
+          res.headers['x-credits-remaining'] ??
+              res.headers['x-ratelimit-remaining'] ??
+              '',
+        );
         final limit = int.tryParse(
-            res.headers['x-credits-limit'] ??
-                res.headers['x-ratelimit-limit'] ??
-                '');
+          res.headers['x-credits-limit'] ??
+              res.headers['x-ratelimit-limit'] ??
+              '',
+        );
 
         if (remaining != null || limit != null) {
           ApiRouter.reportCredits(remaining: remaining, limit: limit);
@@ -139,8 +178,10 @@ class RailRadarSource {
         if (wwwAuth != null) {
           _debug('[RailRadar]   www-authenticate: $wwwAuth');
         }
-        _debug('[RailRadar]   sent auth header: '
-            'Bearer ${key.substring(0, key.length < 10 ? key.length : 10)}…');
+        _debug(
+          '[RailRadar]   sent auth header: '
+          'Bearer ${key.substring(0, key.length < 10 ? key.length : 10)}…',
+        );
         return null;
       }
       if (res.statusCode == 404) {
@@ -181,7 +222,8 @@ class RailRadarSource {
       }
 
       if (body['success'] != true) {
-        _lastError = body['error']?.toString() ??
+        _lastError =
+            body['error']?.toString() ??
             body['message']?.toString() ??
             'API returned success=false';
         _debug('[RailRadar] success!=true on $uri: $_lastError');
@@ -209,18 +251,31 @@ class RailRadarSource {
     if (kDebugMode) debugPrint(msg);
   }
 
+  static Duration? _retryAfter(String? value) {
+    if (value == null || value.trim().isEmpty) return null;
+    final seconds = int.tryParse(value.trim());
+    if (seconds != null) return Duration(seconds: seconds);
+    try {
+      final retryAt = HttpDate.parse(value);
+      final delay = retryAt.difference(DateTime.now().toUtc());
+      return delay.isNegative ? Duration.zero : delay;
+    } on FormatException {
+      return null;
+    }
+  }
+
   // ═══════════════════════════════════════════════════════════════════
   // 1. TRAIN AUTOCOMPLETE
   // ═══════════════════════════════════════════════════════════════════
   static Future<List<Map<String, dynamic>>> searchTrains(
-      String query, {
-        int limit = 10,
-      }) async {
+    String query, {
+    int limit = 10,
+  }) async {
     if (query.trim().isEmpty) return [];
-    final data = await _get('/lookup/search/trains', query: {
-      'q': query.trim(),
-      'limit': '$limit',
-    });
+    final data = await _get(
+      '/lookup/search/trains',
+      query: {'q': query.trim(), 'limit': '$limit'},
+    );
     if (data is! List) return [];
     return data
         .whereType<Map>()
@@ -232,14 +287,19 @@ class RailRadarSource {
   // 2. STATION AUTOCOMPLETE
   // ═══════════════════════════════════════════════════════════════════
   static Future<List<Map<String, dynamic>>> searchStations(
-      String query, {
-        int limit = 10,
-      }) async {
+    String query, {
+    int limit = 10,
+    int offset = 0,
+  }) async {
     if (query.trim().isEmpty) return [];
-    final data = await _get('/lookup/search/stations', query: {
-      'q': query.trim(),
-      'limit': '$limit',
-    });
+    final data = await _get(
+      '/lookup/search/stations',
+      query: {
+        'q': query.trim(),
+        'limit': '$limit',
+        if (offset > 0) 'offset': '$offset',
+      },
+    );
     if (data is! List) return [];
     return data
         .whereType<Map>()
@@ -251,9 +311,9 @@ class RailRadarSource {
   // 3. LIVE TRAIN RUNNING STATUS
   // ═══════════════════════════════════════════════════════════════════
   static Future<Map<String, dynamic>?> liveTracking(
-      String trainNumber, {
-        bool includeGeometry = true,
-      }) async {
+    String trainNumber, {
+    bool includeGeometry = true,
+  }) async {
     final n = trainNumber.trim();
     if (n.isEmpty) return null;
 
@@ -269,17 +329,18 @@ class RailRadarSource {
   // 4. TRAINS BETWEEN STATIONS — date-aware
   // ═══════════════════════════════════════════════════════════════════
   static Future<Map<String, dynamic>?> trainsBetween(
-      String from,
-      String to, {
-        String? date,
-      }) async {
+    String from,
+    String to, {
+    String? date,
+  }) async {
     final f = from.trim().toUpperCase();
     final t = to.trim().toUpperCase();
     if (f.isEmpty || t.isEmpty) return null;
 
-    final data = await _get('/trains/between/${f}/${t}', query: {
-      if (date != null && date.isNotEmpty) 'date': date,
-    });
+    final data = await _get(
+      '/trains/between/${f}/${t}',
+      query: {if (date != null && date.isNotEmpty) 'date': date},
+    );
     if (data is! Map) return null;
     return Map<String, dynamic>.from(data);
   }
@@ -288,12 +349,13 @@ class RailRadarSource {
   // 5. STATION LIVE BOARD
   // ═══════════════════════════════════════════════════════════════════
   static Future<Map<String, dynamic>?> stationLive(
-      String stationCode, {
-        int hours = 8,
-      }) async {
-    final data = await _get('/stations/$stationCode/live', query: {
-      'hours': '$hours',
-    });
+    String stationCode, {
+    int hours = 8,
+  }) async {
+    final data = await _get(
+      '/stations/$stationCode/live',
+      query: {'hours': '$hours'},
+    );
     if (data is! Map) return null;
     return Map<String, dynamic>.from(data);
   }
@@ -302,8 +364,8 @@ class RailRadarSource {
   // 6. STATION SCHEDULE
   // ═══════════════════════════════════════════════════════════════════
   static Future<Map<String, dynamic>?> stationSchedule(
-      String stationCode,
-      ) async {
+    String stationCode,
+  ) async {
     final data = await _get('/stations/$stationCode/trains');
     if (data is! Map) return null;
     return Map<String, dynamic>.from(data);
@@ -322,9 +384,9 @@ class RailRadarSource {
   // 8. COACH POSITION / FORMATION & COACHES
   // ═══════════════════════════════════════════════════════════════════
   static Future<Map<String, dynamic>?> coachPosition(
-      String trainNumber, [
-        String? stationCode,
-      ]) async {
+    String trainNumber, [
+    String? stationCode,
+  ]) async {
     final path = (stationCode != null && stationCode.trim().isNotEmpty)
         ? '/trains/$trainNumber/coaches/${stationCode.trim().toUpperCase()}'
         : '/trains/$trainNumber/coaches';
@@ -333,26 +395,22 @@ class RailRadarSource {
     return Map<String, dynamic>.from(data);
   }
 
-  static Future<Map<String, dynamic>?> trainCoaches(
-      String trainNumber,
-      ) async {
+  static Future<Map<String, dynamic>?> trainCoaches(String trainNumber) async {
     return coachPosition(trainNumber);
   }
 
   // ═══════════════════════════════════════════════════════════════════
   // 9. TRAIN SCHEDULE & ROUTE GEOMETRY
   // ═══════════════════════════════════════════════════════════════════
-  static Future<Map<String, dynamic>?> trainSchedule(
-      String trainNumber,
-      ) async {
+  static Future<Map<String, dynamic>?> trainSchedule(String trainNumber) async {
     final data = await _get('/trains/$trainNumber');
     if (data is! Map) return null;
     return Map<String, dynamic>.from(data);
   }
 
   static Future<Map<String, dynamic>?> trainRouteGeometry(
-      String trainNumber,
-      ) async {
+    String trainNumber,
+  ) async {
     final n = trainNumber.trim();
     if (n.isEmpty) return null;
 

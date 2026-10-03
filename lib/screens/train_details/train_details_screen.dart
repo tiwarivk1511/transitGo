@@ -15,11 +15,13 @@ import '../train_map/train_map_screen.dart';
 class TrainDetailsScreen extends StatefulWidget {
   final String trainNumber;
   final String trainName;
+  final TrainJourneyInfo? journeyInfo;
 
   const TrainDetailsScreen({
     super.key,
     required this.trainNumber,
     required this.trainName,
+    this.journeyInfo,
   });
 
   @override
@@ -197,6 +199,7 @@ class _TrainDetailsScreenState extends State<TrainDetailsScreen>
   @override
   Widget build(BuildContext context) {
     final d = _data;
+    final trainType = d?.trainType ?? widget.journeyInfo?.trainType ?? '';
     return Scaffold(
       backgroundColor: const Color(0xFF0B132B),
       floatingActionButton: d != null
@@ -237,12 +240,11 @@ class _TrainDetailsScreenState extends State<TrainDetailsScreen>
                 fontSize: 14,
               ),
             ),
-            if (d != null)
-              Text(
-                '${d.trainNumber}'
-                '${d.trainType.isNotEmpty ? " • ${d.trainType}" : ""}',
-                style: GoogleFonts.inter(color: Colors.white54, fontSize: 10),
-              ),
+            Text(
+              '${d?.trainNumber ?? widget.trainNumber}'
+              '${trainType.isNotEmpty ? " • $trainType" : ""}',
+              style: GoogleFonts.inter(color: Colors.white54, fontSize: 10),
+            ),
           ],
         ),
         actions: [
@@ -276,66 +278,234 @@ class _TrainDetailsScreenState extends State<TrainDetailsScreen>
           ),
         ],
       ),
-      body: _loading
-          ? const LoadingIndicator(label: 'Fetching live status…')
-          : _error != null && _data == null
-          ? Center(
-              child: Padding(
-                padding: const EdgeInsets.all(24),
-                child: ErrorBox(message: _error!, onRetry: _manualRefresh),
-              ),
-            )
-          : RefreshIndicator(
-              onRefresh: _manualRefresh,
-              color: const Color(0xFF00F2FE),
-              backgroundColor: const Color(0xFF1C2541),
-              child: _data == null
-                  ? ListView(
-                      children: const [
-                        SizedBox(height: 200),
-                        Center(
-                          child: Text(
-                            'No data',
-                            style: TextStyle(color: Colors.white54),
-                          ),
-                        ),
-                      ],
-                    )
-                  : ListView(
-                      controller: _detailScrollController,
-                      padding: const EdgeInsets.fromLTRB(16, 16, 16, 100),
-                      children: [
-                        _StatusHeader(data: _data!, lastFetch: _lastFetch),
-                        const SizedBox(height: 16),
-                        LiveSpeedCard(
-                          trainSpeedKmh: _data!.currentLocation.speedKmh,
-                          trainLivePosition:
-                              _data!.currentLocation.hasGpsCoordinates
-                              ? _data!.currentLocation.latLng
-                              : null,
-                          trainRoute: _data!.routeGeometry,
-                        ),
-                        const SizedBox(height: 16),
-                        _JourneySummary(data: _data!),
-                        if (_data!.nextHalt != null) ...[
-                          const SizedBox(height: 16),
-                          _NextHaltCard(
-                            data: _data!,
-                            nextHalt: _data!.nextHalt!,
-                          ),
-                        ],
-                        if (_data!.coachComposition.isNotEmpty) ...[
-                          const SizedBox(height: 16),
-                          _CoachStrip(coaches: _data!.coachComposition, trainName: _data!.trainName, trainType: _data!.trainType),
-                        ],
-                        const SizedBox(height: 20),
-                        _RouteTimeline(data: _data!),
-                      ],
+      body: Column(
+        children: [
+          if (widget.journeyInfo != null)
+            // _SearchJourneyCard(info: widget.journeyInfo!),
+            const SizedBox.shrink(),
+          Expanded(
+            child: _loading
+                ? const LoadingIndicator(label: 'Fetching live status…')
+                : _error != null && _data == null
+                ? Center(
+                    child: Padding(
+                      padding: const EdgeInsets.all(24),
+                      child: ErrorBox(
+                        message: _error!,
+                        onRetry: _manualRefresh,
+                      ),
                     ),
-            ),
+                  )
+                : RefreshIndicator(
+                    onRefresh: _manualRefresh,
+                    color: const Color(0xFF00F2FE),
+                    backgroundColor: const Color(0xFF1C2541),
+                    child: _data == null
+                        ? ListView(
+                            children: const [
+                              SizedBox(height: 200),
+                              Center(
+                                child: Text(
+                                  'No data',
+                                  style: TextStyle(color: Colors.white54),
+                                ),
+                              ),
+                            ],
+                          )
+                        : ListView(
+                            controller: _detailScrollController,
+                            padding: const EdgeInsets.fromLTRB(
+                              16,
+                              16,
+                              16,
+                              100,
+                            ),
+                            children: [
+                              _StatusHeader(
+                                data: _data!,
+                                lastFetch: _lastFetch,
+                              ),
+                              const SizedBox(height: 16),
+                              LiveSpeedCard(
+                                trainSpeedKmh:
+                                    _data!.currentLocation.speedKmh,
+                                trainLivePosition:
+                                    _data!.currentLocation.hasGpsCoordinates
+                                    ? _data!.currentLocation.latLng
+                                    : null,
+                                trainRoute: _data!.routeGeometry,
+                              ),
+                              const SizedBox(height: 16),
+                              _JourneySummary(data: _data!),
+                              if (_data!.nextHalt != null) ...[
+                                const SizedBox(height: 16),
+                                _NextHaltCard(
+                                  data: _data!,
+                                  nextHalt: _data!.nextHalt!,
+                                ),
+                              ],
+                              if (_data!.coachComposition.isNotEmpty) ...[
+                                const SizedBox(height: 16),
+                                _CoachStrip(
+                                  coaches: _data!.coachComposition,
+                                  trainName: _data!.trainName,
+                                  trainType: _data!.trainType,
+                                ),
+                              ],
+                              const SizedBox(height: 20),
+                              _RouteTimeline(data: _data!),
+                            ],
+                          ),
+                  ),
+          ),
+        ],
+      ),
     );
   }
 }
+
+// class _SearchJourneyCard extends StatelessWidget {
+//   final TrainJourneyInfo info;
+//
+//   const _SearchJourneyCard({required this.info});
+//
+//   @override
+//   Widget build(BuildContext context) {
+//     final from = info.fromName.isNotEmpty ? info.fromName : info.fromCode;
+//     final to = info.toName.isNotEmpty ? info.toName : info.toCode;
+//
+//     return Container(
+//       width: double.infinity,
+//       margin: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+//       padding: const EdgeInsets.all(14),
+//       decoration: BoxDecoration(
+//         color: const Color(0xFF1C2541),
+//         borderRadius: BorderRadius.circular(18),
+//         border: Border.all(
+//           color: const Color(0xFF00F2FE).withValues(alpha: 0.18),
+//         ),
+//       ),
+//       child: Column(
+//         crossAxisAlignment: CrossAxisAlignment.start,
+//         children: [
+//           Text(
+//             'SELECTED JOURNEY',
+//             style: GoogleFonts.inter(
+//               color: const Color(0xFF00F2FE),
+//               fontSize: 9,
+//               fontWeight: FontWeight.w800,
+//               letterSpacing: 1,
+//             ),
+//           ),
+//           const SizedBox(height: 8),
+//           Row(
+//             children: [
+//               Expanded(
+//                 child: Text(
+//                   '$from (${info.fromCode})',
+//                   maxLines: 1,
+//                   overflow: TextOverflow.ellipsis,
+//                   style: GoogleFonts.inter(
+//                     color: Colors.white,
+//                     fontSize: 12,
+//                     fontWeight: FontWeight.w700,
+//                   ),
+//                 ),
+//               ),
+//               const Padding(
+//                 padding: EdgeInsets.symmetric(horizontal: 8),
+//                 child: Icon(
+//                   Icons.arrow_forward_rounded,
+//                   color: Colors.white38,
+//                   size: 16,
+//                 ),
+//               ),
+//               Expanded(
+//                 child: Text(
+//                   '$to (${info.toCode})',
+//                   maxLines: 1,
+//                   overflow: TextOverflow.ellipsis,
+//                   textAlign: TextAlign.end,
+//                   style: GoogleFonts.inter(
+//                     color: Colors.white,
+//                     fontSize: 12,
+//                     fontWeight: FontWeight.w700,
+//                   ),
+//                 ),
+//               ),
+//             ],
+//           ),
+//           const SizedBox(height: 10),
+//           Wrap(
+//             spacing: 7,
+//             runSpacing: 7,
+//             children: [
+//               if (info.departure != '--' || info.arrival != '--')
+//                 _infoPill(
+//                   icon: Icons.schedule_rounded,
+//                   text: '${info.departure} → ${info.arrival}',
+//                 ),
+//               if (info.distanceKm > 0)
+//                 _infoPill(
+//                   icon: Icons.straighten_rounded,
+//                   text: '${info.distanceKm} km',
+//                 ),
+//               if (info.durationMin != null)
+//                 _infoPill(
+//                   icon: Icons.timelapse_rounded,
+//                   text: _formatDuration(info.durationMin!),
+//                 ),
+//               if (info.halts != null)
+//                 _infoPill(
+//                   icon: Icons.swap_horiz_rounded,
+//                   text: '${info.halts} halts',
+//                 ),
+//               if (info.runDays.isNotEmpty)
+//                 _infoPill(
+//                   icon: Icons.date_range_rounded,
+//                   text: info.runDays.length == 7
+//                       ? 'Daily'
+//                       : info.runDays.join(', '),
+//                 ),
+//             ],
+//           ),
+//         ],
+//       ),
+//     );
+//   }
+//
+//   String _formatDuration(int minutes) {
+//     if (minutes <= 0) return 'Duration n/a';
+//     final hours = minutes ~/ 60;
+//     final remainingMinutes = minutes % 60;
+//     if (hours == 0) return '${remainingMinutes}m';
+//     if (remainingMinutes == 0) return '${hours}h';
+//     return '${hours}h ${remainingMinutes}m';
+//   }
+//
+//   Widget _infoPill({required IconData icon, required String text}) {
+//     return Container(
+//       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+//       decoration: BoxDecoration(
+//         color: const Color(0xFF00F2FE).withValues(alpha: 0.1),
+//       ),
+//       child: Row(
+//         children: [
+//           Icon(icon, color: const Color(0xFF00F2FE), size: 16),
+//           const SizedBox(width: 8),
+//           Text(
+//             text,
+//             style: GoogleFonts.inter(
+//               color: Colors.white,
+//               fontSize: 12,
+//               fontWeight: FontWeight.w700,
+//             ),
+//           ),
+//         ],
+//       ),
+//     );
+//   }
+// }
 
 // ═════════════════════════════════════════════════════════════════════
 // HEADER
@@ -1025,6 +1195,7 @@ class _RouteTimeline extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final cur = data.currentIndex;
+    final haltCount = data.route.where((stop) => stop.isHalt).length;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -1049,7 +1220,8 @@ class _RouteTimeline extends StatelessWidget {
               ),
               const Spacer(),
               Text(
-                '${data.route.length} stops',
+                '${data.route.length} stops'
+                '${haltCount > 0 ? " • $haltCount halts" : ""}',
                 style: GoogleFonts.inter(color: Colors.white38, fontSize: 10),
               ),
             ],
@@ -1165,7 +1337,7 @@ class _RouteRow extends StatelessWidget {
                         : (isPast
                               ? const Color(0xFF00F2FE).withOpacity(0.5)
                               : (stop.isHalt
-                                    ? Colors.white70
+                                    ? Colors.orangeAccent
                                     : Colors.white30)),
                     border: isCurrent
                         ? Border.all(color: const Color(0xFF00F2FE), width: 3)
@@ -1234,6 +1406,33 @@ class _RouteRow extends StatelessWidget {
                             ),
                           ),
                         ),
+                        if (stop.isHalt) ...[
+                          const SizedBox(width: 6),
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 6,
+                              vertical: 3,
+                            ),
+                            decoration: BoxDecoration(
+                              color: Colors.orangeAccent.withValues(alpha: 0.12),
+                              borderRadius: BorderRadius.circular(6),
+                              border: Border.all(
+                                color: Colors.orangeAccent.withValues(
+                                  alpha: 0.35,
+                                ),
+                              ),
+                            ),
+                            child: Text(
+                              'HALT',
+                              style: GoogleFonts.inter(
+                                color: Colors.orangeAccent,
+                                fontSize: 8,
+                                fontWeight: FontWeight.w900,
+                                letterSpacing: 0.5,
+                              ),
+                            ),
+                          ),
+                        ],
                         if (stop.platform != null)
                           Container(
                             padding: const EdgeInsets.symmetric(

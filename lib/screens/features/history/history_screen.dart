@@ -21,6 +21,11 @@ class HistoryScreen extends StatefulWidget {
   State<HistoryScreen> createState() => _HistoryScreenState();
 }
 
+double? _asDouble(dynamic value) {
+  if (value is num) return value.toDouble();
+  return value == null ? null : double.tryParse(value.toString());
+}
+
 class _HistoryScreenState extends State<HistoryScreen> {
   static const _historyKinds = [
     'route_search',
@@ -135,6 +140,16 @@ class _HistoryScreenState extends State<HistoryScreen> {
             toCode: toCode,
             fromName: data['fromName']?.toString() ?? fromCode,
             toName: data['toName']?.toString() ?? toCode,
+            fromCity: data['fromCity']?.toString(),
+            toCity: data['toCity']?.toString(),
+            fromLatitude: _asDouble(data['fromLatitude']),
+            fromLongitude: _asDouble(data['fromLongitude']),
+            toLatitude: _asDouble(data['toLatitude']),
+            toLongitude: _asDouble(data['toLongitude']),
+            fromDistrict: data['fromDistrict']?.toString(),
+            fromState: data['fromState']?.toString(),
+            toDistrict: data['toDistrict']?.toString(),
+            toState: data['toState']?.toString(),
           );
         }
         break;

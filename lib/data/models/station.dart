@@ -2,6 +2,7 @@ class Station {
   final String code;
   final String name;
   final String? city;
+  final String? district;
   final String? state;
 
   /// Optional metadata (RailRadar provides these).
@@ -17,6 +18,7 @@ class Station {
     required this.code,
     required this.name,
     this.city,
+    this.district,
     this.state,
     this.latitude,
     this.longitude,
@@ -31,20 +33,30 @@ class Station {
   // Generic JSON parser — works for NTES, RailRadar and local list
   // ═══════════════════════════════════════════════════════════════════
   factory Station.fromJson(Map<String, dynamic> json) => Station(
-    code: (json['code'] ??
-        json['stationCode'] ??
-        json['stnCode'] ??
-        '')
+    code: (json['code'] ?? json['stationCode'] ?? json['stnCode'] ?? '')
         .toString(),
-    name: (json['name'] ??
-        json['stationName'] ??
-        json['stnName'] ??
-        '')
+    name: (json['name'] ?? json['stationName'] ?? json['stnName'] ?? '')
         .toString(),
-    city: json['city']?.toString() ?? json['cityName']?.toString(),
-    state: json['state']?.toString() ?? json['stateName']?.toString(),
+    city:
+        json['city']?.toString() ??
+        json['cityName']?.toString() ??
+        json['city_name']?.toString() ??
+        json['town']?.toString() ??
+        json['townName']?.toString(),
+    district:
+        json['district']?.toString() ??
+        json['districtName']?.toString() ??
+        json['district_name']?.toString() ??
+        json['distName']?.toString(),
+    state:
+        json['state']?.toString() ??
+        json['stateName']?.toString() ??
+        json['state_name']?.toString() ??
+        json['unionTerritory']?.toString() ??
+        json['unionTerritoryName']?.toString() ??
+        json['ut']?.toString(),
     latitude: _dbl(json['latitude'] ?? json['lat']),
-    longitude: _dbl(json['longitude'] ?? json['lng']),
+    longitude: _dbl(json['longitude'] ?? json['lng'] ?? json['lon']),
     zone: json['zone']?.toString() ?? json['zoneCode']?.toString(),
     division: json['division']?.toString(),
     address: json['address']?.toString(),
@@ -68,6 +80,7 @@ class Station {
     'code': code,
     'name': name,
     if (city != null) 'city': city,
+    if (district != null) 'district': district,
     if (state != null) 'state': state,
     if (latitude != null) 'latitude': latitude,
     if (longitude != null) 'longitude': longitude,
@@ -86,7 +99,7 @@ class Station {
   @override
   bool operator ==(Object other) =>
       identical(this, other) ||
-          other is Station && code.toLowerCase() == other.code.toLowerCase();
+      other is Station && code.toLowerCase() == other.code.toLowerCase();
 
   @override
   int get hashCode => code.toLowerCase().hashCode;

@@ -18,10 +18,6 @@ class WakeMeUpService {
     await _plugin.initialize(
       const InitializationSettings(android: android, iOS: ios),
     );
-    await _plugin
-        .resolvePlatformSpecificImplementation<
-        AndroidFlutterLocalNotificationsPlugin>()
-        ?.requestNotificationsPermission();
   }
 
   static void arm({
@@ -55,7 +51,7 @@ class WakeMeUpService {
     if (data == null) return;
 
     final idxTarget =
-    data.route.indexWhere((s) => s.stationCode == _targetCode);
+        data.route.indexWhere((s) => s.stationCode == _targetCode);
     final idxCurrent = data.currentIndex;
     if (idxTarget < 0 || idxCurrent < 0 || idxCurrent >= idxTarget) return;
 
@@ -69,13 +65,13 @@ class WakeMeUpService {
 
     final now = DateTime.now();
     final etaToday =
-    DateTime(now.year, now.month, now.day, eta.hour, eta.minute)
-        .add(Duration(minutes: data.delayMinutes));
+        DateTime(now.year, now.month, now.day, eta.hour, eta.minute)
+            .add(Duration(minutes: data.delayMinutes));
     final left = etaToday.difference(now).inMinutes;
 
     if (left <= _aheadMinutes && left >= -2) {
       _fired = true;
-      await _notify(target.stationName, left);
+      await _notify(_targetName ?? target.stationName, left);
     }
   }
 

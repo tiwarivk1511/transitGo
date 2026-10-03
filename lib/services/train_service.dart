@@ -1,5 +1,6 @@
 import '../core/cache/offline_cache.dart';
 import '../data/models/train.dart';
+import '../data/sources/api_router.dart';
 import '../data/sources/live_stream_source.dart';
 import '../data/sources/ntes_source.dart';
 import '../data/sources/railradar_source.dart';
@@ -204,11 +205,23 @@ class TrainService {
   /// Human-readable description of the last RailRadar failure, or
   /// `null` if the last call succeeded.
   static String? lastErrorDescription() {
+    final pause = ApiRouter.railRadarRetryDelay;
+    if (pause != null &&
+        ApiRouter.railRadarPauseReason?.contains('quota') == true) {
+      return 'RailRadar monthly quota is exhausted and the backup train-data '
+          'service did not respond.';
+    }
+    if (pause != null &&
+        ApiRouter.railRadarPauseReason?.contains('auth failure') == true) {
+      return 'RailRadar rejected its API credentials. Please contact support '
+          'or try again later.';
+    }
+
     final code = RailRadarSource.lastStatusCode;
     final msg = RailRadarSource.lastErrorMessage;
 
     if (code == 429) {
-      return 'Too many requests. Please wait a minute and try again.';
+      return null;
     }
     if (code == 401 || code == 403) {
       return 'API key rejected. Please contact support.';

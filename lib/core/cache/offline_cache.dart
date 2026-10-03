@@ -7,9 +7,10 @@ import 'package:shared_preferences/shared_preferences.dart';
 /// SQLite-backed persistent cache for TransitGo (with SharedPreferences fallback for Web).
 class OfflineCache {
   static Database? _db;
+  static Future<Database>? _opening;
   static SharedPreferences? _prefs;
   static const String _dbName = 'transitgo_v2.db';
-  static const int _dbVersion = 2;
+  static const int _dbVersion = 3;
 
   static Future<void> _initWeb() async {
     if (_prefs == null && kIsWeb) {
@@ -22,12 +23,27 @@ class OfflineCache {
   // ───────────────────────────────────────────────────────────────────
   static Future<Database> get instance async {
     if (kIsWeb) {
-      throw UnsupportedError('SQLite is not supported on web. Use web SharedPreferences methods.');
+      throw UnsupportedError(
+        'SQLite is not supported on web. Use web SharedPreferences methods.',
+      );
     }
     if (_db != null) return _db!;
 
+    final opening = _opening;
+    if (opening != null) return opening;
+
+    final future = _openDatabase();
+    _opening = future;
+    try {
+      return _db = await future;
+    } finally {
+      _opening = null;
+    }
+  }
+
+  static Future<Database> _openDatabase() async {
     final path = join(await getDatabasesPath(), _dbName);
-    _db = await openDatabase(
+    return openDatabase(
       path,
       version: _dbVersion,
       onCreate: _onCreate,
@@ -36,7 +52,6 @@ class OfflineCache {
         await db.execute('PRAGMA foreign_keys = ON');
       },
     );
-    return _db!;
   }
 
   // ───────────────────────────────────────────────────────────────────
@@ -64,8 +79,12 @@ class OfflineCache {
         created INTEGER NOT NULL
       )
     ''');
-    await db.execute('CREATE INDEX idx_history_kind ON search_history(kind, created DESC)');
-    await db.execute('CREATE INDEX idx_history_query ON search_history(kind, query)');
+    await db.execute(
+      'CREATE INDEX idx_history_kind ON search_history(kind, created DESC)',
+    );
+    await db.execute(
+      'CREATE INDEX idx_history_query ON search_history(kind, query)',
+    );
 
     await db.execute('''
       CREATE TABLE tracked_trains(
@@ -76,7 +95,9 @@ class OfflineCache {
         track_count   INTEGER NOT NULL DEFAULT 1
       )
     ''');
-    await db.execute('CREATE INDEX idx_tracked_last_seen ON tracked_trains(last_seen DESC)');
+    await db.execute(
+      'CREATE INDEX idx_tracked_last_seen ON tracked_trains(last_seen DESC)',
+    );
 
     await db.execute('''
       CREATE TABLE favourite_stations(
@@ -87,31 +108,59 @@ class OfflineCache {
         added     INTEGER NOT NULL
       )
     ''');
-    await db.execute('CREATE INDEX idx_fav_added ON favourite_stations(added DESC)');
+    await db.execute(
+      'CREATE INDEX idx_fav_added ON favourite_stations(added DESC)',
+    );
+    await db.execute('''
+      CREATE TABLE station_metadata(
+        code TEXT PRIMARY KEY,
+        data TEXT NOT NULL,
+        updated INTEGER NOT NULL
+      )
+    ''');
   }
 
-  static Future<void> _onUpgrade(Database db, int oldVersion, int newVersion) async {}
+  static Future<void> _onUpgrade(
+    Database db,
+    int oldVersion,
+    int newVersion,
+  ) async {
+    if (oldVersion < 3) {
+      await db.execute('''
+        CREATE TABLE station_metadata(
+          code TEXT PRIMARY KEY,
+          data TEXT NOT NULL,
+          updated INTEGER NOT NULL
+        )
+      ''');
+    }
+  }
 
   // ═══════════════════════════════════════════════════════════════════
   // 1. RESPONSE CACHE
   // ═══════════════════════════════════════════════════════════════════
-  static Future<void> put(String key, dynamic value, {Duration ttl = const Duration(hours: 1)}) async {
+  static Future<void> put(
+    String key,
+    dynamic value, {
+    Duration ttl = const Duration(hours: 1),
+  }) async {
     try {
       final now = DateTime.now().millisecondsSinceEpoch;
       final expires = now + ttl.inMilliseconds;
       if (kIsWeb) {
         await _initWeb();
-        _prefs?.setString('cache_val_$key', jsonEncode(value));
-        _prefs?.setInt('cache_exp_$key', expires);
-        _prefs?.setInt('cache_crt_$key', now);
+        await _prefs?.setString('cache_val_$key', jsonEncode(value));
+        await _prefs?.setInt('cache_exp_$key', expires);
+        await _prefs?.setInt('cache_crt_$key', now);
         return;
       }
       final db = await instance;
-      await db.insert(
-        'cache',
-        {'key': key, 'json': jsonEncode(value), 'expires': expires, 'created': now},
-        conflictAlgorithm: ConflictAlgorithm.replace,
-      );
+      await db.insert('cache', {
+        'key': key,
+        'json': jsonEncode(value),
+        'expires': expires,
+        'created': now,
+      }, conflictAlgorithm: ConflictAlgorithm.replace);
     } catch (_) {}
   }
 
@@ -130,7 +179,13 @@ class OfflineCache {
         return jsonDecode(valStr);
       }
       final db = await instance;
-      final rows = await db.query('cache', columns: ['json', 'expires'], where: 'key = ?', whereArgs: [key], limit: 1);
+      final rows = await db.query(
+        'cache',
+        columns: ['json', 'expires'],
+        where: 'key = ?',
+        whereArgs: [key],
+        limit: 1,
+      );
       if (rows.isEmpty) return null;
       final expires = rows.first['expires'] as int;
       if (now > expires) {
@@ -205,7 +260,9 @@ class OfflineCache {
         await _initWeb();
         final keys = _prefs?.getKeys() ?? {};
         for (final k in keys.toList()) {
-          if (k.startsWith('cache_val_') || k.startsWith('cache_exp_') || k.startsWith('cache_crt_')) {
+          if (k.startsWith('cache_val_') ||
+              k.startsWith('cache_exp_') ||
+              k.startsWith('cache_crt_')) {
             _prefs?.remove(k);
           }
         }
@@ -219,7 +276,12 @@ class OfflineCache {
   // ═══════════════════════════════════════════════════════════════════
   // 2. SEARCH HISTORY
   // ═══════════════════════════════════════════════════════════════════
-  static Future<void> addHistory(String kind, String query, {String? label, Map<String, dynamic>? data}) async {
+  static Future<void> addHistory(
+    String kind,
+    String query, {
+    String? label,
+    Map<String, dynamic>? data,
+  }) async {
     if (query.trim().isEmpty) return;
     try {
       final now = DateTime.now().millisecondsSinceEpoch;
@@ -239,7 +301,11 @@ class OfflineCache {
         return;
       }
       final db = await instance;
-      await db.delete('search_history', where: 'kind = ? AND query = ?', whereArgs: [kind, query]);
+      await db.delete(
+        'search_history',
+        where: 'kind = ? AND query = ?',
+        whereArgs: [kind, query],
+      );
       await db.insert('search_history', {
         'kind': kind,
         'query': query,
@@ -250,21 +316,35 @@ class OfflineCache {
     } catch (_) {}
   }
 
-  static Future<List<Map<String, dynamic>>> getHistory(String kind, {int limit = 30}) async {
+  static Future<List<Map<String, dynamic>>> getHistory(
+    String kind, {
+    int limit = 30,
+  }) async {
     try {
       if (kIsWeb) {
         await _initWeb();
         final str = _prefs?.getString('history_$kind');
         if (str == null) return [];
         final decoded = jsonDecode(str) as List;
-        return decoded.map((e) => Map<String, dynamic>.from(e)).take(limit).toList();
+        return decoded
+            .map((e) => Map<String, dynamic>.from(e))
+            .take(limit)
+            .toList();
       }
       final db = await instance;
-      final rows = await db.query('search_history', where: 'kind = ?', whereArgs: [kind], orderBy: 'created DESC', limit: limit);
+      final rows = await db.query(
+        'search_history',
+        where: 'kind = ?',
+        whereArgs: [kind],
+        orderBy: 'created DESC',
+        limit: limit,
+      );
       return rows.map((r) {
         final m = Map<String, dynamic>.from(r);
         if (m['data'] is String) {
-          try { m['data'] = jsonDecode(m['data'] as String); } catch (_) {}
+          try {
+            m['data'] = jsonDecode(m['data'] as String);
+          } catch (_) {}
         }
         return m;
       }).toList();
@@ -299,7 +379,11 @@ class OfflineCache {
   // ═══════════════════════════════════════════════════════════════════
   // 3. TRACKED TRAINS
   // ═══════════════════════════════════════════════════════════════════
-  static Future<void> rememberTrain(String number, String name, {Map<String, dynamic>? route}) async {
+  static Future<void> rememberTrain(
+    String number,
+    String name, {
+    Map<String, dynamic>? route,
+  }) async {
     if (number.trim().isEmpty) return;
     try {
       final now = DateTime.now().millisecondsSinceEpoch;
@@ -329,21 +413,32 @@ class OfflineCache {
     } catch (_) {}
   }
 
-  static Future<List<Map<String, dynamic>>> getRecentTrains({int limit = 20}) async {
+  static Future<List<Map<String, dynamic>>> getRecentTrains({
+    int limit = 20,
+  }) async {
     try {
       if (kIsWeb) {
         await _initWeb();
         final str = _prefs?.getString('tracked_trains');
         if (str == null) return [];
         final decoded = jsonDecode(str) as List;
-        return decoded.map((e) => Map<String, dynamic>.from(e)).take(limit).toList();
+        return decoded
+            .map((e) => Map<String, dynamic>.from(e))
+            .take(limit)
+            .toList();
       }
       final db = await instance;
-      final rows = await db.query('tracked_trains', orderBy: 'last_seen DESC', limit: limit);
+      final rows = await db.query(
+        'tracked_trains',
+        orderBy: 'last_seen DESC',
+        limit: limit,
+      );
       return rows.map((r) {
         final m = Map<String, dynamic>.from(r);
         if (m['route_json'] is String) {
-          try { m['route'] = jsonDecode(m['route_json'] as String); } catch (_) {}
+          try {
+            m['route'] = jsonDecode(m['route_json'] as String);
+          } catch (_) {}
         }
         return m;
       }).toList();
@@ -362,7 +457,11 @@ class OfflineCache {
         return;
       }
       final db = await instance;
-      await db.delete('tracked_trains', where: 'train_number = ?', whereArgs: [number]);
+      await db.delete(
+        'tracked_trains',
+        where: 'train_number = ?',
+        whereArgs: [number],
+      );
     } catch (_) {}
   }
 
@@ -381,7 +480,12 @@ class OfflineCache {
   // ═══════════════════════════════════════════════════════════════════
   // 4. FAVOURITE STATIONS
   // ═══════════════════════════════════════════════════════════════════
-  static Future<void> addFavouriteStation({required String code, required String name, String? city, String? state}) async {
+  static Future<void> addFavouriteStation({
+    required String code,
+    required String name,
+    String? city,
+    String? state,
+  }) async {
     if (code.trim().isEmpty) return;
     try {
       final now = DateTime.now().millisecondsSinceEpoch;
@@ -389,13 +493,23 @@ class OfflineCache {
         await _initWeb();
         final list = await getFavouriteStations();
         list.removeWhere((s) => s['code'] == code);
-        list.insert(0, {'code': code, 'name': name, 'city': city, 'state': state, 'added': now});
+        list.insert(0, {
+          'code': code,
+          'name': name,
+          'city': city,
+          'state': state,
+          'added': now,
+        });
         _prefs?.setString('fav_stations', jsonEncode(list));
         return;
       }
       final db = await instance;
       await db.insert('favourite_stations', {
-        'code': code, 'name': name, 'city': city, 'state': state, 'added': now
+        'code': code,
+        'name': name,
+        'city': city,
+        'state': state,
+        'added': now,
       }, conflictAlgorithm: ConflictAlgorithm.replace);
     } catch (_) {}
   }
@@ -410,7 +524,11 @@ class OfflineCache {
         return;
       }
       final db = await instance;
-      await db.delete('favourite_stations', where: 'code = ?', whereArgs: [code]);
+      await db.delete(
+        'favourite_stations',
+        where: 'code = ?',
+        whereArgs: [code],
+      );
     } catch (_) {}
   }
 
@@ -440,7 +558,95 @@ class OfflineCache {
   }
 
   // ═══════════════════════════════════════════════════════════════════
-  // 5. MAINTENANCE
+  // 5. PERSISTENT STATION METADATA
+  // ═══════════════════════════════════════════════════════════════════
+  static Future<void> saveStationMetadata(
+    Iterable<Map<String, dynamic>> stations,
+  ) async {
+    final normalized = <String, Map<String, dynamic>>{};
+    for (final station in stations) {
+      final code =
+          (station['code'] ??
+                  station['stationCode'] ??
+                  station['stnCode'] ??
+                  '')
+              .toString()
+              .trim()
+              .toUpperCase();
+      if (code.isEmpty) continue;
+      normalized[code] = {...station, 'code': code};
+    }
+    if (normalized.isEmpty) return;
+
+    final now = DateTime.now().millisecondsSinceEpoch;
+    if (kIsWeb) {
+      await _initWeb();
+      for (final entry in normalized.entries) {
+        final key = 'station_metadata_${entry.key}';
+        final raw = _prefs?.getString(key);
+        final existing = raw == null
+            ? <String, dynamic>{}
+            : Map<String, dynamic>.from(jsonDecode(raw) as Map);
+        final merged = {...existing, ...entry.value, 'code': entry.key};
+        await _prefs?.setString(key, jsonEncode(merged));
+      }
+      return;
+    }
+
+    final db = await instance;
+    await db.transaction((txn) async {
+      for (final entry in normalized.entries) {
+        final rows = await txn.query(
+          'station_metadata',
+          columns: ['data'],
+          where: 'code = ?',
+          whereArgs: [entry.key],
+          limit: 1,
+        );
+        final existing = rows.isEmpty
+            ? <String, dynamic>{}
+            : Map<String, dynamic>.from(
+                jsonDecode(rows.first['data']! as String) as Map,
+              );
+        final merged = {...existing, ...entry.value, 'code': entry.key};
+        await txn.insert('station_metadata', {
+          'code': entry.key,
+          'data': jsonEncode(merged),
+          'updated': now,
+        }, conflictAlgorithm: ConflictAlgorithm.replace);
+      }
+    });
+  }
+
+  static Future<List<Map<String, dynamic>>> getStationMetadata() async {
+    if (kIsWeb) {
+      await _initWeb();
+      final metadata = <Map<String, dynamic>>[];
+      for (final key in _prefs?.getKeys() ?? <String>{}) {
+        if (!key.startsWith('station_metadata_')) continue;
+        final raw = _prefs?.getString(key);
+        if (raw == null) continue;
+        final decoded = jsonDecode(raw);
+        if (decoded is Map) {
+          metadata.add(Map<String, dynamic>.from(decoded));
+        }
+      }
+      return metadata;
+    }
+
+    final db = await instance;
+    final rows = await db.query('station_metadata', columns: ['data']);
+    return rows
+        .map(
+          (row) => Map<String, dynamic>.from(
+            jsonDecode(row['data']! as String) as Map,
+          ),
+        )
+        .toList();
+  }
+
+  // ═══════════════════════════════════════════════════════════════════
+  // 6. MAINTENANCE
   // ═══════════════════════════════════════════════════════════════════
   static Future<void> wipeAll() async {
     try {
@@ -457,6 +663,7 @@ class OfflineCache {
       await db.delete('search_history');
       await db.delete('tracked_trains');
       await db.delete('favourite_stations');
+      await db.delete('station_metadata');
       await db.execute('VACUUM');
     } catch (_) {}
   }

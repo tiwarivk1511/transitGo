@@ -9,6 +9,7 @@ import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
 import 'app.dart';
 import 'core/cache/offline_cache.dart';
+import 'core/utils/permission_helper.dart';
 import 'data/sources/station_source.dart';
 import 'services/remote_config_service.dart';
 import 'services/wake_me_up_service.dart';
@@ -86,13 +87,24 @@ Future<void> main() async {
       debugPrint('[startup] StationSource.load failed: $e');
     }),
     if (!kIsWeb)
-      OfflineCache.instance.catchError((e) {
-        debugPrint('[startup] OfflineCache init failed: $e');
-      })
+      () async {
+        try {
+          await OfflineCache.instance;
+        } catch (e) {
+          debugPrint('[startup] OfflineCache init failed: $e');
+        }
+      }()
     else
       Future<void>.value(),
-    WakeMeUpService.init().catchError((e) {
-      debugPrint('[startup] WakeMeUpService.init failed: $e');
+    () async {
+      await WakeMeUpService.init();
+      final granted = await PermissionHelper.requestAllPermissions();
+      debugPrint(
+        '[startup] Notification and location permissions '
+        '${granted ? "granted" : "not fully granted"}',
+      );
+    }().catchError((e) {
+      debugPrint('[startup] Notification/location permission setup failed: $e');
     }),
   ]);
 

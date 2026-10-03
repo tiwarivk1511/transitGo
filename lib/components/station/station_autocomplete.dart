@@ -5,6 +5,8 @@ import 'package:google_fonts/google_fonts.dart';
 import '../../data/models/station.dart';
 import '../../services/station_service.dart';
 import '../../data/sources/railradar_source.dart';
+import '../../data/sources/station_source.dart';
+import '../../core/cache/offline_cache.dart';
 
 class StationAutocomplete extends StatefulWidget {
   final TextEditingController controller;
@@ -75,7 +77,7 @@ class _StationAutocompleteState extends State<StationAutocomplete> {
 
     final local = await StationService.search(q);
     if (!mounted || seq != _reqSeq) return;
-    if (local.isNotEmpty) {
+    if (local.isNotEmpty && local.every(_hasAreaMetadata)) {
       setState(() {
         _suggestions = local;
         _remoteLoading = false;
@@ -83,14 +85,47 @@ class _StationAutocompleteState extends State<StationAutocomplete> {
       return;
     }
 
-    setState(() => _remoteLoading = true);
-    final remote = await RailRadarSource.searchStations(q, limit: 10);
+    if (local.isNotEmpty) {
+      setState(() {
+        _suggestions = local;
+        _remoteLoading = true;
+      });
+    } else {
+      setState(() => _remoteLoading = true);
+    }
+
+    final cacheKey = 'station_search_${q.toLowerCase()}';
+    final cached = await OfflineCache.get(cacheKey);
+    final remote = cached is List
+        ? cached
+              .whereType<Map>()
+              .map((item) => Map<String, dynamic>.from(item))
+              .toList()
+        : await RailRadarSource.searchStations(q, limit: 10);
     if (!mounted || seq != _reqSeq) return;
 
-    final stations = remote
+    final remoteStations = remote
         .map((e) => Station.fromJson(e))
         .where((s) => s.code.isNotEmpty && s.name.isNotEmpty)
         .toList();
+    if (cached == null && remoteStations.isNotEmpty) {
+      await OfflineCache.put(
+        cacheKey,
+        remoteStations.map((station) => station.toJson()).toList(),
+        ttl: const Duration(days: 30),
+      );
+    }
+    await StationSource.cacheStations(remoteStations);
+    final localCodes = local
+        .map((station) => station.code.toUpperCase())
+        .toSet();
+    final stations = [
+      for (final station in local)
+        _mergeStationMetadata(station, StationSource.byCode(station.code)),
+      ...remoteStations.where(
+        (station) => !localCodes.contains(station.code.toUpperCase()),
+      ),
+    ];
 
     setState(() {
       _suggestions = stations;
@@ -98,9 +133,27 @@ class _StationAutocompleteState extends State<StationAutocomplete> {
     });
   }
 
+  Station _mergeStationMetadata(Station station, Station? metadata) {
+    if (metadata == null) return station;
+    return Station.fromJson({
+      ...station.toJson(),
+      ...metadata.toJson(),
+      'code': station.code,
+      'name': station.name,
+    });
+  }
+
+  bool _hasAreaMetadata(Station station) =>
+      station.district?.trim().isNotEmpty == true ||
+      station.city?.trim().isNotEmpty == true;
+
   String _buildLocationSubtitle(Station s) {
     final parts = <String>[];
-    if (s.city != null && s.city!.isNotEmpty) parts.add(s.city!);
+    if (s.district != null && s.district!.isNotEmpty) {
+      parts.add('District: ${s.district}');
+    } else if (s.city != null && s.city!.isNotEmpty) {
+      parts.add(s.city!);
+    }
     if (s.state != null && s.state!.isNotEmpty) parts.add(s.state!);
     if (parts.isEmpty) {
       if (s.zone != null && s.zone!.isNotEmpty) parts.add('Zone: ${s.zone}');
@@ -171,18 +224,18 @@ class _StationAutocompleteState extends State<StationAutocomplete> {
                           ),
                         )
                       : (widget.controller.text.isNotEmpty
-                          ? IconButton(
-                              icon: const Icon(
-                                Icons.clear_rounded,
-                                color: Colors.white38,
-                                size: 18,
-                              ),
-                              onPressed: () {
-                                widget.controller.clear();
-                                setState(() => _suggestions = []);
-                              },
-                            )
-                          : null),
+                            ? IconButton(
+                                icon: const Icon(
+                                  Icons.clear_rounded,
+                                  color: Colors.white38,
+                                  size: 18,
+                                ),
+                                onPressed: () {
+                                  widget.controller.clear();
+                                  setState(() => _suggestions = []);
+                                },
+                              )
+                            : null),
                 ),
               ),
             ),
@@ -229,10 +282,12 @@ class _StationAutocompleteState extends State<StationAutocomplete> {
                       return Material(
                         color: Colors.transparent,
                         child: InkWell(
-                          splashColor:
-                              const Color(0xFF00F2FE).withValues(alpha: 0.15),
-                          highlightColor:
-                              const Color(0xFF00F2FE).withValues(alpha: 0.05),
+                          splashColor: const Color(
+                            0xFF00F2FE,
+                          ).withValues(alpha: 0.15),
+                          highlightColor: const Color(
+                            0xFF00F2FE,
+                          ).withValues(alpha: 0.05),
                           onTap: () {
                             widget.onStationSelected(s);
                             setState(() => _suggestions = []);
@@ -251,12 +306,14 @@ class _StationAutocompleteState extends State<StationAutocomplete> {
                                     vertical: 6,
                                   ),
                                   decoration: BoxDecoration(
-                                    color: const Color(0xFF00F2FE)
-                                        .withValues(alpha: 0.1),
+                                    color: const Color(
+                                      0xFF00F2FE,
+                                    ).withValues(alpha: 0.1),
                                     borderRadius: BorderRadius.circular(10),
                                     border: Border.all(
-                                      color: const Color(0xFF00F2FE)
-                                          .withValues(alpha: 0.3),
+                                      color: const Color(
+                                        0xFF00F2FE,
+                                      ).withValues(alpha: 0.3),
                                     ),
                                   ),
                                   child: Text(
@@ -311,12 +368,13 @@ class _StationAutocompleteState extends State<StationAutocomplete> {
                                             Container(
                                               padding:
                                                   const EdgeInsets.symmetric(
-                                                horizontal: 6,
-                                                vertical: 2,
-                                              ),
+                                                    horizontal: 6,
+                                                    vertical: 2,
+                                                  ),
                                               decoration: BoxDecoration(
-                                                color: Colors.white
-                                                    .withValues(alpha: 0.08),
+                                                color: Colors.white.withValues(
+                                                  alpha: 0.08,
+                                                ),
                                                 borderRadius:
                                                     BorderRadius.circular(4),
                                               ),

@@ -14,6 +14,7 @@ class MntesClient {
   static final Map<String, String> _cookies = {};
   static DateTime? _lastRequestAt;
   static DateTime? _sessionBootedAt;
+  static Future<void> _postQueue = Future<void>.value();
   static bool _booted = false;
   static int _consecutiveFailures = 0;
   static DateTime? _blockedUntil;
@@ -99,7 +100,27 @@ class MntesClient {
   static bool get isBlocked =>
       _blockedUntil != null && DateTime.now().isBefore(_blockedUntil!);
 
-  static Future<dynamic> post(String cat, String sub, {Map<String, String>? query}) async {
+  static Future<dynamic> post(
+    String cat,
+    String sub, {
+    Map<String, String>? query,
+  }) async {
+    final previousPost = _postQueue;
+    final releasePost = Completer<void>();
+    _postQueue = releasePost.future;
+    await previousPost;
+    try {
+      return await _postUnlocked(cat, sub, query: query);
+    } finally {
+      releasePost.complete();
+    }
+  }
+
+  static Future<dynamic> _postUnlocked(
+    String cat,
+    String sub, {
+    Map<String, String>? query,
+  }) async {
     if (isBlocked) return null;
 
     await _bootstrap();

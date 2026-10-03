@@ -46,6 +46,15 @@ class _HomeScreenState extends State<HomeScreen> {
     setState(() => _selectedTrain = null);
   }
 
+  String _stationLabel(Station station) {
+    final area = [
+      station.district,
+      station.state,
+    ].whereType<String>().where((value) => value.trim().isNotEmpty).join(', ');
+    return '${station.name} (${station.code})'
+        '${area.isEmpty ? '' : ' · $area'}';
+  }
+
   void _swap() {
     setState(() {
       final t = _from;
@@ -260,7 +269,7 @@ class _HomeScreenState extends State<HomeScreen> {
                           icon: Icons.trip_origin_rounded,
                           onStationSelected: (s) => setState(() {
                             _from = s;
-                            _fromCtrl.text = '${s.name} (${s.code})';
+                            _fromCtrl.text = _stationLabel(s);
                           }),
                         ),
                         const Padding(
@@ -274,7 +283,7 @@ class _HomeScreenState extends State<HomeScreen> {
                           icon: Icons.location_on_rounded,
                           onStationSelected: (s) => setState(() {
                             _to = s;
-                            _toCtrl.text = '${s.name} (${s.code})';
+                            _toCtrl.text = _stationLabel(s);
                           }),
                         ),
                         const SizedBox(height: 8),
@@ -304,6 +313,16 @@ class _HomeScreenState extends State<HomeScreen> {
                                       toCode: _to!.code,
                                       fromName: _from!.name,
                                       toName: _to!.name,
+                                      fromCity: _from!.city,
+                                      toCity: _to!.city,
+                                      fromLatitude: _from!.latitude,
+                                      fromLongitude: _from!.longitude,
+                                      toLatitude: _to!.latitude,
+                                      toLongitude: _to!.longitude,
+                                      fromDistrict: _from!.district,
+                                      fromState: _from!.state,
+                                      toDistrict: _to!.district,
+                                      toState: _to!.state,
                                     ),
                                   )
                                 : null,
@@ -661,7 +680,7 @@ class _HomeScreenState extends State<HomeScreen> {
           splashColor: color.withValues(alpha: 0.2),
           highlightColor: color.withValues(alpha: 0.08),
           child: Padding(
-            padding: const EdgeInsets.all(14),
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -670,13 +689,13 @@ class _HomeScreenState extends State<HomeScreen> {
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
                     Container(
-                      padding: const EdgeInsets.all(9),
+                      padding: const EdgeInsets.all(7),
                       decoration: BoxDecoration(
                         color: color.withValues(alpha: 0.15),
                         borderRadius: BorderRadius.circular(14),
                         border: Border.all(color: color.withValues(alpha: 0.3)),
                       ),
-                      child: Icon(icon, color: color, size: 22),
+                      child: Icon(icon, color: color, size: 20),
                     ),
                     Container(
                       padding: const EdgeInsets.symmetric(
@@ -721,7 +740,7 @@ class _HomeScreenState extends State<HomeScreen> {
                     ),
                   ],
                 ),
-                const SizedBox(height: 14),
+                const SizedBox(height: 8),
                 Row(
                   crossAxisAlignment: CrossAxisAlignment.end,
                   children: [
@@ -743,7 +762,7 @@ class _HomeScreenState extends State<HomeScreen> {
                           const SizedBox(height: 3),
                           Text(
                             subtitle,
-                            maxLines: 2,
+                            maxLines: 1,
                             overflow: TextOverflow.ellipsis,
                             style: GoogleFonts.inter(
                               color: Colors.white60,

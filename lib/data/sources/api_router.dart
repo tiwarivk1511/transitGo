@@ -4,7 +4,8 @@ import 'package:flutter/foundation.dart';
 ///
 /// Logic:
 ///   • Credits available  → RailRadar use karo
-///   • 429 / 402 aaya     → credits khatam, MNTES pe switch, reset tak rukо
+///   • 429 aaya           → rate-limit cooldown, Retry-After ka respect
+///   • 402 aaya           → credits khatam, MNTES pe switch, reset tak rukо
 ///   • 401 / 403 aaya     → auth problem, longer pause
 ///   • Probe interval     → har 6 ghante ek baar try karo (manual recharge detect)
 ///   • Reset date reached → auto back to RailRadar
@@ -18,6 +19,8 @@ class ApiRouter {
 
   // ── Auth failure pe zyada lamba pause ──────────────────────────
   static const Duration _authPauseDuration = Duration(hours: 12);
+  static const Duration _defaultRateLimitPause = Duration(minutes: 1);
+  static const Duration _maxRateLimitPause = Duration(hours: 1);
 
   // ── Credits low hone ka threshold (percentage) ─────────────────
   static const int lowCreditsThreshold = 10;
@@ -61,16 +64,18 @@ class ApiRouter {
   // PUBLIC — events
   // ═══════════════════════════════════════════════════════════════
 
-  /// Credits exhausted (429 / 402) — agle monthly reset tak pause.
+  /// Credits exhausted (402) — agle monthly reset tak pause.
   static void pauseForMonthlyExhaustion({String? reason}) {
     final resumeAt = _nextMonthlyReset();
     _railRadarPausedUntil = resumeAt;
     _nextProbeAt = DateTime.now().add(_probeInterval);
     _pauseReason = reason ?? 'monthly quota exhausted';
 
-    debugPrint('[Router] RailRadar EXHAUSTED — paused until '
-        '${resumeAt.toIso8601String()} '
-        '(${_daysUntil(resumeAt)}d, probes every ${_probeInterval.inHours}h)');
+    debugPrint(
+      '[Router] RailRadar EXHAUSTED — paused until '
+      '${resumeAt.toIso8601String()} '
+      '(${_daysUntil(resumeAt)}d, probes every ${_probeInterval.inHours}h)',
+    );
   }
 
   /// Auth problem (401/403) — 12h pause.
@@ -79,8 +84,27 @@ class ApiRouter {
     _nextProbeAt = DateTime.now().add(_probeInterval);
     _pauseReason = reason ?? 'auth failure';
 
-    debugPrint('[Router] RailRadar AUTH FAILED — paused '
-        '${_authPauseDuration.inHours}h — $_pauseReason');
+    debugPrint(
+      '[Router] RailRadar AUTH FAILED — paused '
+      '${_authPauseDuration.inHours}h — $_pauseReason',
+    );
+  }
+
+  /// HTTP 429 means request throttling unless the server reports quota exhaustion.
+  static void pauseForRateLimit({Duration? retryAfter}) {
+    final requestedPause = retryAfter ?? _defaultRateLimitPause;
+    final pause = requestedPause <= Duration.zero
+        ? _defaultRateLimitPause
+        : requestedPause > _maxRateLimitPause
+        ? _maxRateLimitPause
+        : requestedPause;
+    final resumeAt = DateTime.now().add(pause);
+    _railRadarPausedUntil = resumeAt;
+    _nextProbeAt = resumeAt;
+    _pauseReason = 'rate limited';
+    debugPrint(
+      '[Router] RailRadar rate limited — paused for ${pause.inSeconds}s',
+    );
   }
 
   /// RailRadar successful → unpause + healthy mark.
@@ -110,16 +134,36 @@ class ApiRouter {
   }
 
   /// Har API call ke baad status inspect karo.
-  static void inspectRailRadarResult(int? status) {
+  static void inspectRailRadarResult(
+    int? status, {
+    Duration? retryAfter,
+    String? responseBody,
+  }) {
     if (status == null) return;
 
     if (status == 200) {
       markRailRadarHealthy();
-    } else if (status == 429 || status == 402) {
-      // 402 = Payment Required, 429 = Too Many Requests
-      pauseForMonthlyExhaustion(reason: 'HTTP $status');
+    } else if (status == 402) {
+      pauseForMonthlyExhaustion(
+        reason: 'monthly quota exhausted (HTTP $status)',
+      );
+    } else if (status == 429) {
+      final body = responseBody?.toLowerCase() ?? '';
+      final quotaExhausted =
+          body.contains('quota') ||
+          body.contains('monthly') ||
+          body.contains('exhaust') ||
+          body.contains('credit limit') ||
+          body.contains('credits depleted');
+      if (quotaExhausted) {
+        pauseForMonthlyExhaustion(
+          reason: 'monthly quota exhausted (HTTP $status)',
+        );
+      } else {
+        pauseForRateLimit(retryAfter: retryAfter);
+      }
     } else if (status == 401 || status == 403) {
-      pauseForAuth(reason: 'HTTP $status');
+      pauseForAuth(reason: 'auth failure (HTTP $status)');
     }
     // 404, 5xx — pause nahi karo, transient hai
   }
@@ -128,6 +172,15 @@ class ApiRouter {
   // INTROSPECTION
   // ═══════════════════════════════════════════════════════════════
   static bool get isRailRadarPaused => _railRadarPausedUntil != null;
+  static Duration? get railRadarRetryDelay {
+    final until = _railRadarPausedUntil;
+    if (until == null) return null;
+    final delay = until.difference(DateTime.now());
+    return delay.isNegative ? null : delay;
+  }
+
+  static String? get railRadarPauseReason =>
+      railRadarRetryDelay == null ? null : _pauseReason;
 
   static bool get creditsLow {
     final r = _lastSeenRemaining;
@@ -183,6 +236,5 @@ class ApiRouter {
     return targetIst.subtract(const Duration(hours: 5, minutes: 30));
   }
 
-  static int _daysUntil(DateTime d) =>
-      d.difference(DateTime.now()).inDays;
+  static int _daysUntil(DateTime d) => d.difference(DateTime.now()).inDays;
 }
